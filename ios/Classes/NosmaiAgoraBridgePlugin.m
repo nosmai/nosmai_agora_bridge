@@ -48,6 +48,16 @@
                                  details:nil]);
     }
   }
+  else if ([@"notify_camera_switch" isEqualToString:call.method]) {
+    @try {
+      [self.videoController notifyCameraSwitch];
+      result(@(YES));
+    } @catch (NSException *exception) {
+      result([FlutterError errorWithCode:@"CAMERA_SWITCH_ERROR"
+                                 message:[NSString stringWithFormat:@"Failed to notify camera switch: %@", exception.reason]
+                                 details:nil]);
+    }
+  }
   else {
     result(FlutterMethodNotImplemented);
   }

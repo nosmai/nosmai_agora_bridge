@@ -10,9 +10,9 @@ Pod::Spec.new do |s|
 Easy integration of Nosmai filters with Agora RTC Engine for Flutter.
 Process live video streams with real-time filters without writing native code.
                        DESC
-  s.homepage         = 'https://github.com/yourusername/nosmai_agora_bridge'
+  s.homepage         = 'https://github.com/nosmai/nosmai_agora_bridge'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'Nosmai' => 'admin@nosmai.com' }
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*.{h,m}'
   s.public_header_files = 'Classes/**/*.h'

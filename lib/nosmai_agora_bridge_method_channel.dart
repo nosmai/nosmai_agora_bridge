@@ -27,4 +27,9 @@ class MethodChannelNosmaiAgoraBridge extends NosmaiAgoraBridgePlatform {
   Future<void> dispose() async {
     await methodChannel.invokeMethod('native_dispose');
   }
+
+  @override
+  Future<void> notifyCameraSwitch() async {
+    await methodChannel.invokeMethod('notify_camera_switch');
+  }
 }

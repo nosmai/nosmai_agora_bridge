@@ -6,6 +6,7 @@
 - (instancetype)initWith:(NSString *) appId;
 - (intptr_t)getNativeHandle;
 - (void)switchCamera;
+- (void)notifyCameraSwitch;  // Update camera state without physical switch
 - (void)dispose;
 
 @end

@@ -44,8 +44,9 @@ class VideoRawDataController(context: Context, myAppId: String ) {
                 videoFrame?.apply {
                     val i420Buffer = buffer.toI420()
 
-                    // Detect camera from sourceType (PRIMARY = front, SECONDARY = back)
-                    val isFrontCamera = (sourceType == Constants.VideoSourceType.VIDEO_SOURCE_CAMERA_PRIMARY.value)
+                    // ✅ Detect camera from VideoFrame's sourceType property
+                    val frameSourceType = videoFrame.sourceType
+                    val isFrontCamera = (frameSourceType == VideoFrame.SourceType.kFrontCamera)
 
                     if (!isPipelineReady) {
                         try {
@@ -67,9 +68,6 @@ class VideoRawDataController(context: Context, myAppId: String ) {
 
                     if (isPipelineReady) {
                         try {
-                            Log.d("VideoRawDataController", "📸 sourceType=$sourceType, isFront=$isFrontCamera, rotation=$rotation")
-
-                            // Update camera facing for Nosmai SDK
                             NosmaiSDK.setCameraFacing(isFrontCamera)
 
                             NosmaiSDK.processExternalI420InPlace(
@@ -140,9 +138,7 @@ class VideoRawDataController(context: Context, myAppId: String ) {
     fun nativeHandle() = rtcEngine!!.nativeHandle
 
     fun switchCamera() {
-        Log.w("VideoRawDataController", "🔄 switchCamera() called")
         rtcEngine?.switchCamera()
-        // Camera facing will be auto-detected from sourceType in next frame
     }
 
     fun dispose() {

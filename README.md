@@ -102,9 +102,12 @@ await NosmaiFlutter.instance.removeAllFilters();
 ### 6. Switch Camera
 
 ```dart
-// Use Agora's standard method
+// Switch camera and notify Nosmai
 await _engine.switchCamera();
+await NosmaiAgoraBridge.notifyCameraSwitch();
 ```
+
+**Important:** Always call `notifyCameraSwitch()` after switching camera to ensure Nosmai filters work correctly on the new camera.
 
 ### 7. Cleanup
 
@@ -286,6 +289,7 @@ await NosmaiFlutter.instance.removeAllFilters();
 |--------|-------------|---------|
 | `getNativeHandle({required String agoraAppId})` | Get native handle for Agora integration | `Future<int>` |
 | `initialize({required String agoraAppId})` | Convenience method - creates and initializes RtcEngine | `Future<RtcEngine>` |
+| `notifyCameraSwitch()` | Notify Nosmai SDK when camera is switched | `Future<void>` |
 | `disposeNative()` | Clean up native resources only | `Future<void>` |
 | `dispose()` | Clean up RtcEngine and native resources | `Future<void>` |
 | `engine` | Get current RtcEngine instance | `RtcEngine?` |

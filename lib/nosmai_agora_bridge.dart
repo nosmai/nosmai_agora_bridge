@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'nosmai_agora_bridge_platform_interface.dart';
 
 /// NosmaiAgoraBridge - Seamless integration of Nosmai filters with Agora RTC
@@ -80,6 +81,27 @@ class NosmaiAgoraBridge {
 
   /// Check if native bridge is initialized
   static bool get isInitialized => _nativeHandle != null;
+
+  /// Notify native side that camera was switched
+  ///
+  /// Call this AFTER calling rtcEngine.switchCamera() to ensure
+  /// the native video processor knows which camera is active.
+  ///
+  /// **Note**: This is only required for iOS. Android automatically detects
+  /// camera switches via VideoFrame.sourceType property.
+  ///
+  /// Example:
+  /// ```dart
+  /// await _engine.switchCamera();
+  /// await NosmaiAgoraBridge.notifyCameraSwitch();  // Auto-handled for platform
+  /// ```
+  static Future<void> notifyCameraSwitch() async {
+    // Only notify on iOS - Android auto-detects via VideoFrame.sourceType
+    if (Platform.isIOS) {
+      await NosmaiAgoraBridgePlatform.instance.notifyCameraSwitch();
+    }
+    // Android: No-op, camera detected automatically
+  }
 
   /// Get platform version for debugging
   static Future<String?> getPlatformVersion() {

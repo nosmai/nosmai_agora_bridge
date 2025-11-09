@@ -36,4 +36,9 @@ abstract class NosmaiAgoraBridgePlatform extends PlatformInterface {
   Future<void> dispose() {
     throw UnimplementedError('dispose() has not been implemented.');
   }
+
+  /// Notify native side that camera was switched
+  Future<void> notifyCameraSwitch() {
+    throw UnimplementedError('notifyCameraSwitch() has not been implemented.');
+  }
 }
