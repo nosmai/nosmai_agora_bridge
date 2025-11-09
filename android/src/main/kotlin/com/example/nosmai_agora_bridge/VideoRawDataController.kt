@@ -17,7 +17,6 @@ class VideoRawDataController(context: Context, myAppId: String ) {
 
     private var rtcEngine: RtcEngine? = null
     private var isPipelineReady = false
-    private var isFrontCamera = true
 
     init {
         rtcEngine = RtcEngine.create(RtcEngineConfig().apply {
@@ -26,26 +25,27 @@ class VideoRawDataController(context: Context, myAppId: String ) {
             mEventHandler = object : IRtcEngineEventHandler() { }
         })
 
-        // Disable Agora's local mirror - we want local preview to stay as-is
         rtcEngine!!.setLocalVideoMirrorMode(io.agora.rtc2.Constants.VIDEO_MIRROR_MODE_DISABLED)
 
-        // Configure video encoder - frames are already UN-mirrored by Nosmai, send as-is
         val encoderConfig = io.agora.rtc2.video.VideoEncoderConfiguration().apply {
+            dimensions = io.agora.rtc2.video.VideoEncoderConfiguration.VD_640x360.apply {
+                width = 720
+                height = 1280
+            }
             mirrorMode = io.agora.rtc2.video.VideoEncoderConfiguration.MIRROR_MODE_TYPE.MIRROR_MODE_DISABLED
         }
         rtcEngine!!.setVideoEncoderConfiguration(encoderConfig)
-        Log.i("VideoRawDataController", "Video encoder mirror DISABLED - Nosmai handles un-mirroring")
 
-        // Set initial camera facing and mirror state for Nosmai
-        NosmaiSDK.setCameraFacing(isFrontCamera)
-        // setMirrorX is for INTERNAL pipeline (PlatformView - local preview)
-        // Frames are already mirrored, so DON'T flip for local preview
+        NosmaiSDK.setCameraFacing(true)  // Default front camera
         NosmaiSDK.setMirrorX(false)
 
         rtcEngine!!.registerVideoFrameObserver(object : IVideoFrameObserver {
             override fun onCaptureVideoFrame(sourceType: Int, videoFrame: VideoFrame?): Boolean {
                 videoFrame?.apply {
                     val i420Buffer = buffer.toI420()
+
+                    // Detect camera from sourceType (PRIMARY = front, SECONDARY = back)
+                    val isFrontCamera = (sourceType == Constants.VideoSourceType.VIDEO_SOURCE_CAMERA_PRIMARY.value)
 
                     if (!isPipelineReady) {
                         try {
@@ -57,37 +57,35 @@ class VideoRawDataController(context: Context, myAppId: String ) {
                             if (pipelineInitialized) {
                                 isPipelineReady = true
                                 NosmaiSDK.setExternalFrameMode(true)
-                                Log.i("VideoRawDataController", "External pipeline initialized")
                             } else {
-                                Log.e("VideoRawDataController", "Failed to initialize pipeline")
                                 return@apply
                             }
                         } catch (e: Exception) {
-                            Log.e("VideoRawDataController", "Pipeline init failed: ${e.message}")
                             return@apply
                         }
                     }
 
                     if (isPipelineReady) {
                         try {
-                            val success = NosmaiSDK.processExternalI420InPlace(
+                            Log.d("VideoRawDataController", "📸 sourceType=$sourceType, isFront=$isFrontCamera, rotation=$rotation")
+
+                            // Update camera facing for Nosmai SDK
+                            NosmaiSDK.setCameraFacing(isFrontCamera)
+
+                            NosmaiSDK.processExternalI420InPlace(
                                 i420Buffer.dataY,
-                                i420Buffer.dataV,
                                 i420Buffer.dataU,
+                                i420Buffer.dataV,
                                 i420Buffer.width,
                                 i420Buffer.height,
                                 i420Buffer.strideY,
-                                i420Buffer.strideV,
                                 i420Buffer.strideU,
+                                i420Buffer.strideV,
                                 rotation,
-                                isFrontCamera  // Front camera: FLIP to un-mirror for remote users
+                                isFrontCamera
                             )
-
-                            if (!success) {
-                                Log.w("VideoRawDataController", "⚠️ Frame processing failed")
-                            }
                         } catch (e: Exception) {
-                            Log.e("VideoRawDataController", "Frame processing error: ${e.message}")
+                            // Silently ignore errors
                         }
                     }
 
@@ -125,12 +123,10 @@ class VideoRawDataController(context: Context, myAppId: String ) {
             }
 
             override fun getRotationApplied(): Boolean {
-                return true  // We handle rotation in Nosmai processing
+                return true
             }
 
             override fun getMirrorApplied(): Boolean {
-                // Frames are UN-mirrored by Nosmai (setMirrorX flips them)
-                // So tell Agora: NO mirror applied, send as-is
                 return false
             }
 
@@ -144,16 +140,9 @@ class VideoRawDataController(context: Context, myAppId: String ) {
     fun nativeHandle() = rtcEngine!!.nativeHandle
 
     fun switchCamera() {
-        isFrontCamera = !isFrontCamera
+        Log.w("VideoRawDataController", "🔄 switchCamera() called")
         rtcEngine?.switchCamera()
-
-        // Update Nosmai mirror state for new camera
-        NosmaiSDK.setCameraFacing(isFrontCamera)
-        // setMirrorX for INTERNAL pipeline (local preview)
-        // Frames already mirrored from camera, don't flip
-        NosmaiSDK.setMirrorX(false)
-
-        Log.i("VideoRawDataController", "Camera switched → isFrontCamera=$isFrontCamera (external pipeline flips for un-mirror)")
+        // Camera facing will be auto-detected from sourceType in next frame
     }
 
     fun dispose() {

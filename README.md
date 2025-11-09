@@ -305,6 +305,29 @@ A: Absolutely. You configure and use RtcEngine exactly as before.
 **Q: What about performance?**
 A: Native video processing is highly optimized with minimal performance impact.
 
+## Important Notes
+
+### Local Preview Configuration
+
+Currently, for the local preview to display correctly, you need to configure the `VideoCanvas` with specific render and mirror settings:
+
+```dart
+AgoraVideoView(
+  controller: VideoViewController(
+    rtcEngine: _engine,
+    canvas: const VideoCanvas(
+      uid: 0,
+      renderMode: RenderModeType.renderModeFit,
+      mirrorMode: VideoMirrorModeType.videoMirrorModeDisabled,
+    ),
+  ),
+),
+```
+
+### Known Issues
+
+- **Android Beauty Filters**: Beauty filters are currently not working in live streaming on Android. We are actively working on fixing this issue and will release an update soon.
+
 ## Troubleshooting
 
 ### Filters not appearing
