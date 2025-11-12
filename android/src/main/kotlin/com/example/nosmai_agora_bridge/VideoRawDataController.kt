@@ -143,6 +143,12 @@ class VideoRawDataController(context: Context, myAppId: String ) {
 
     fun dispose() {
         rtcEngine!!.registerVideoFrameObserver(null)
+
+        if (isPipelineReady) {
+            NosmaiSDK.setExternalFrameMode(false)
+            isPipelineReady = false
+        }
+
         RtcEngine.destroy()
         rtcEngine = null
     }
