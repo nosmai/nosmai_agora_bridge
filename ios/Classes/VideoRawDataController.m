@@ -15,6 +15,15 @@ static BOOL CallNosmaiProcessor(CVPixelBufferRef buffer, BOOL flip) {
     return NO;
 }
 
+static void ResetNosmaiExternalFrameMode(void) {
+    Class cls = NSClassFromString(@"NosmaiFlutterPlugin");
+    SEL sel = @selector(resetExternalFrameMode);
+    if (cls && [cls respondsToSelector:sel]) {
+        void (*fn)(Class, SEL) = (void (*)(Class, SEL))objc_msgSend;
+        fn(cls, sel);
+    }
+}
+
 @interface VideoRawDataController ()<AgoraRtcEngineDelegate, AgoraVideoFrameDelegate>
 
 @property(nonatomic, strong) AgoraRtcEngineKit *agoraRtcEngine;
@@ -63,6 +72,9 @@ static BOOL CallNosmaiProcessor(CVPixelBufferRef buffer, BOOL flip) {
 - (void)dispose {
     [self.agoraRtcEngine setVideoFrameDelegate:NULL];
     [AgoraRtcEngineKit destroy];
+
+    // Reset Nosmai SDK from external frame mode back to camera mode
+    ResetNosmaiExternalFrameMode();
 }
 
 - (BOOL)onCaptureVideoFrame:(AgoraOutputVideoFrame *)videoFrame sourceType:(AgoraVideoSourceType)sourceType {
