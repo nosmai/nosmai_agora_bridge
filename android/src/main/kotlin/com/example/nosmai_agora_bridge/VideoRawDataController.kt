@@ -11,6 +11,8 @@ import io.agora.rtc2.video.IVideoFrameObserver.POSITION_POST_CAPTURER
 import io.agora.rtc2.video.IVideoFrameObserver.PROCESS_MODE_READ_WRITE
 import io.agora.rtc2.video.IVideoFrameObserver.VIDEO_PIXEL_I420
 import com.nosmai.effect.api.NosmaiSDK
+import com.nosmai.effect.api.NosmaiBeauty
+import com.nosmai.effect.NosmaiEffects
 
 
 class VideoRawDataController(context: Context, myAppId: String ) {
@@ -145,6 +147,11 @@ class VideoRawDataController(context: Context, myAppId: String ) {
         rtcEngine!!.registerVideoFrameObserver(null)
 
         if (isPipelineReady) {
+            NosmaiEffects.removeEffect()
+            NosmaiSDK.removeAllEffects()
+            NosmaiBeauty.removeAllBeautyFilters()
+
+
             NosmaiSDK.setExternalFrameMode(false)
             isPipelineReady = false
         }
