@@ -334,6 +334,20 @@ AgoraVideoView(
 
 ## Troubleshooting
 
+### Live streaming works in debug/release but not in TestFlight/production (iOS)
+
+If your live streaming works fine in debug and release builds but fails in TestFlight or production builds, you need to change the XCode strip style setting:
+
+1. Open your project in **XCode**
+2. Select **Targets** → **Runner**
+3. Go to **Build Settings**
+4. Under **Deployment** section, find **Strip Style**
+5. Change the value to **Non-Global Symbols**
+
+![XCode Strip Style Settings](xcode-strip-style-settings.png)
+
+This ensures that necessary symbols are preserved in production builds for the native bridge to work correctly.
+
 ### Filters not appearing
 
 1. Ensure Nosmai SDK is initialized before calling `getNativeHandle()`
