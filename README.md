@@ -348,11 +348,6 @@ If your live streaming works fine in debug and release builds but fails in TestF
 
 This ensures that necessary symbols are preserved in production builds for the native bridge to work correctly.
 
-### Filters not appearing
-
-1. Ensure Nosmai SDK is initialized before calling `getNativeHandle()`
-2. Verify filter paths are correct
-3. Check Nosmai API key is valid
 
 ## License
 
