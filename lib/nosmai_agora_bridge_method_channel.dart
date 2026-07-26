@@ -11,7 +11,8 @@ class MethodChannelNosmaiAgoraBridge extends NosmaiAgoraBridgePlatform {
 
   @override
   Future<String?> getPlatformVersion() async {
-    final version = await methodChannel.invokeMethod<String>('getPlatformVersion');
+    final version =
+        await methodChannel.invokeMethod<String>('getPlatformVersion');
     return version;
   }
 
@@ -26,6 +27,28 @@ class MethodChannelNosmaiAgoraBridge extends NosmaiAgoraBridgePlatform {
   @override
   Future<void> dispose() async {
     await methodChannel.invokeMethod('native_dispose');
+  }
+
+  @override
+  Future<bool> startStreaming({
+    required String channelName,
+    String? token,
+    int uid = 0,
+  }) async {
+    final result =
+        await methodChannel.invokeMethod<bool>('native_start_streaming', {
+      'channelName': channelName,
+      'token': token,
+      'uid': uid,
+    });
+    return result ?? false;
+  }
+
+  @override
+  Future<bool> stopStreaming() async {
+    final result =
+        await methodChannel.invokeMethod<bool>('native_stop_streaming');
+    return result ?? false;
   }
 
   @override

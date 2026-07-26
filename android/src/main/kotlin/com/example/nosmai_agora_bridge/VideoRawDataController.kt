@@ -2,161 +2,314 @@ package com.example.nosmai_agora_bridge
 
 import android.content.Context
 import android.util.Log
+import com.nosmai.effect.api.NosmaiSDK
+import io.agora.base.JavaI420Buffer
+import io.agora.base.TextureBufferHelper
 import io.agora.base.VideoFrame
+import io.agora.base.internal.video.EglBase
+import io.agora.rtc2.ChannelMediaOptions
+import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
-import io.agora.rtc2.video.IVideoFrameObserver
-import io.agora.rtc2.video.IVideoFrameObserver.POSITION_POST_CAPTURER
-import io.agora.rtc2.video.IVideoFrameObserver.PROCESS_MODE_READ_WRITE
-import io.agora.rtc2.video.IVideoFrameObserver.VIDEO_PIXEL_I420
-import com.nosmai.effect.api.NosmaiSDK
-import com.nosmai.effect.api.NosmaiBeauty
-import com.nosmai.effect.NosmaiEffects
+import io.agora.rtc2.gl.EglBaseProvider
+import io.agora.rtc2.video.VideoEncoderConfiguration
+import java.nio.ByteBuffer
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
-
-class VideoRawDataController(context: Context, myAppId: String ) {
+class VideoRawDataController(context: Context, myAppId: String) {
+    companion object {
+        private const val TAG = "NosmaiAgoraBridge"
+        private const val STREAM_WIDTH = 720
+        private const val STREAM_HEIGHT = 1280
+        private const val STREAM_BITRATE_KBPS = 2500
+        private const val STREAM_MIN_BITRATE_KBPS = 1200
+    }
 
     private var rtcEngine: RtcEngine? = null
-    private var isPipelineReady = false
+    private var textureHelper: TextureBufferHelper? = null
+    private var textureBridge: AgoraTextureBridge? = null
+    private var pixelExecutor: ExecutorService? = null
+    private var textureMode = false
+    private var inChannel = false
+    private var streamingRequested = false
+    private var frameCount = 0
+
+    private val rtcEventHandler = object : IRtcEngineEventHandler() {
+        override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
+            super.onJoinChannelSuccess(channel, uid, elapsed)
+            inChannel = true
+            frameCount = 0
+            Log.i(TAG, "Agora joined channel=$channel uid=$uid textureMode=$textureMode")
+
+            if (streamingRequested && textureMode) {
+                armTextureCallback()
+            }
+        }
+
+        override fun onLeaveChannel(stats: RtcStats?) {
+            super.onLeaveChannel(stats)
+            inChannel = false
+            clearStreamCallbacks()
+            Log.i(TAG, "Agora left channel")
+        }
+
+        override fun onError(err: Int) {
+            super.onError(err)
+            Log.e(TAG, "Agora error=$err")
+        }
+    }
 
     init {
         rtcEngine = RtcEngine.create(RtcEngineConfig().apply {
             mAppId = myAppId
             mContext = context.applicationContext
-            mEventHandler = object : IRtcEngineEventHandler() { }
+            mEventHandler = rtcEventHandler
         })
+        pixelExecutor = Executors.newSingleThreadExecutor()
 
-        rtcEngine!!.setLocalVideoMirrorMode(io.agora.rtc2.Constants.VIDEO_MIRROR_MODE_DISABLED)
-
-        val encoderConfig = io.agora.rtc2.video.VideoEncoderConfiguration().apply {
-            dimensions = io.agora.rtc2.video.VideoEncoderConfiguration.VD_640x360.apply {
-                width = 720
-                height = 1280
-            }
-            mirrorMode = io.agora.rtc2.video.VideoEncoderConfiguration.MIRROR_MODE_TYPE.MIRROR_MODE_DISABLED
-        }
-        rtcEngine!!.setVideoEncoderConfiguration(encoderConfig)
-
-        NosmaiSDK.setCameraFacing(true)  // Default front camera
-        NosmaiSDK.setMirrorX(false)
-
-        rtcEngine!!.registerVideoFrameObserver(object : IVideoFrameObserver {
-            override fun onCaptureVideoFrame(sourceType: Int, videoFrame: VideoFrame?): Boolean {
-                videoFrame?.apply {
-                    val i420Buffer = buffer.toI420()
-
-                    // ✅ Detect camera from VideoFrame's sourceType property
-                    val frameSourceType = videoFrame.sourceType
-                    val isFrontCamera = (frameSourceType == VideoFrame.SourceType.kFrontCamera)
-
-                    if (!isPipelineReady) {
-                        try {
-                            val pipelineInitialized = NosmaiSDK.initializeExternalFramePipeline(
-                                i420Buffer.width,
-                                i420Buffer.height
-                            )
-
-                            if (pipelineInitialized) {
-                                isPipelineReady = true
-                                NosmaiSDK.setExternalFrameMode(true)
-                            } else {
-                                return@apply
-                            }
-                        } catch (e: Exception) {
-                            return@apply
-                        }
-                    }
-
-                    if (isPipelineReady) {
-                        try {
-                            NosmaiSDK.setCameraFacing(isFrontCamera)
-
-                            NosmaiSDK.processExternalI420InPlace(
-                                i420Buffer.dataY,
-                                i420Buffer.dataU,
-                                i420Buffer.dataV,
-                                i420Buffer.width,
-                                i420Buffer.height,
-                                i420Buffer.strideY,
-                                i420Buffer.strideU,
-                                i420Buffer.strideV,
-                                rotation,
-                                isFrontCamera
-                            )
-                        } catch (e: Exception) {
-                            // Silently ignore errors
-                        }
-                    }
-
-                    videoFrame.replaceBuffer(i420Buffer, videoFrame.rotation, videoFrame.timestampNs)
-                }
-
-                return true
-            }
-
-            override fun onPreEncodeVideoFrame(sourceType: Int, videoFrame: VideoFrame?): Boolean {
-                return false;
-            }
-
-            override fun onMediaPlayerVideoFrame(
-                videoFrame: VideoFrame?,
-                mediaPlayerId: Int
-            ): Boolean {
-                return false;
-            }
-
-            override fun onRenderVideoFrame(
-                channelId: String?,
-                uid: Int,
-                videoFrame: VideoFrame?
-            ): Boolean {
-                return false;
-            }
-
-            override fun getVideoFrameProcessMode(): Int {
-                return PROCESS_MODE_READ_WRITE
-            }
-
-            override fun getVideoFormatPreference(): Int {
-                return VIDEO_PIXEL_I420
-            }
-
-            override fun getRotationApplied(): Boolean {
-                return true
-            }
-
-            override fun getMirrorApplied(): Boolean {
-                return false
-            }
-
-            override fun getObservedFramePosition(): Int {
-                return POSITION_POST_CAPTURER
-            }
-
-        })
+        rtcEngine?.enableVideo()
+        rtcEngine?.setLocalVideoMirrorMode(Constants.VIDEO_MIRROR_MODE_DISABLED)
+        setupTextureMode()
+        configureEncoder()
     }
 
-    fun nativeHandle() = rtcEngine!!.nativeHandle
+    fun nativeHandle(): Long = rtcEngine?.nativeHandle ?: 0L
+
+    fun startStreaming(token: String?, channelName: String, uid: Int): Boolean {
+        val engine = rtcEngine ?: return false
+        if (channelName.isBlank()) return false
+
+        streamingRequested = true
+        frameCount = 0
+        clearStreamCallbacks()
+        NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.DUAL_OUTPUT)
+
+        engine.setExternalVideoSource(
+            true,
+            textureMode,
+            Constants.ExternalVideoSourceType.VIDEO_FRAME
+        )
+        engine.setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
+
+        if (textureMode) {
+            Log.i(TAG, "Streaming via zero-readback texture path; callback arms after join")
+        } else {
+            Log.w(TAG, "Texture mode unavailable; streaming via CPU I420 fallback")
+            armPixelCallback()
+        }
+
+        val options = ChannelMediaOptions().apply {
+            clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
+            channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+            publishCameraTrack = false
+            publishCustomVideoTrack = true
+            publishCustomAudioTrack = true
+            autoSubscribeVideo = true
+            autoSubscribeAudio = true
+        }
+
+        val safeToken = token?.takeIf { it.isNotBlank() }
+        val result = engine.joinChannel(safeToken, channelName, uid, options)
+        if (result != 0) {
+            streamingRequested = false
+            clearStreamCallbacks()
+            NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.PREVIEW_ONLY)
+            Log.e(TAG, "joinChannel failed result=$result")
+            return false
+        }
+        return true
+    }
+
+    fun stopStreaming(): Boolean {
+        streamingRequested = false
+        clearStreamCallbacks()
+        NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.PREVIEW_ONLY)
+        val result = rtcEngine?.leaveChannel() ?: 0
+        inChannel = false
+        return result == 0
+    }
 
     fun switchCamera() {
-        rtcEngine?.switchCamera()
+        // Camera ownership belongs to NosmaiCameraPreview in texture mode.
     }
 
     fun dispose() {
-        rtcEngine!!.registerVideoFrameObserver(null)
-
-        if (isPipelineReady) {
-            NosmaiEffects.removeEffect()
-            NosmaiSDK.removeAllEffects()
-            NosmaiBeauty.removeAllBeautyFilters()
-
-
-            NosmaiSDK.setExternalFrameMode(false)
-            isPipelineReady = false
+        try {
+            stopStreaming()
+        } catch (_: Throwable) {
         }
 
-        RtcEngine.destroy()
+        try {
+            textureBridge?.release()
+        } catch (_: Throwable) {
+        }
+        textureBridge = null
+
+        try {
+            textureHelper?.dispose()
+        } catch (_: Throwable) {
+        }
+        textureHelper = null
+        textureMode = false
+
+        pixelExecutor?.shutdown()
+        pixelExecutor = null
+
         rtcEngine = null
+        RtcEngine.destroy()
+    }
+
+    private fun setupTextureMode() {
+        val engine = rtcEngine ?: return
+        try {
+            try {
+                System.loadLibrary("nosmai")
+                Log.i(TAG, "libnosmai loaded before Agora share-context registration")
+            } catch (t: Throwable) {
+                textureMode = false
+                textureHelper = null
+                textureBridge = null
+                Log.w(TAG, "Early libnosmai load failed; CPU fallback will be used", t)
+                return
+            }
+
+            val agoraContext: EglBase.Context =
+                EglBaseProvider.instance().getRootEglBase().getEglBaseContext()
+            val nativeHandle = agoraContext.getNativeEglContext()
+            NosmaiSDK.setAgoraShareContext(nativeHandle)
+
+            val helper = TextureBufferHelper.create("nosmai-flutter-agora", agoraContext)
+            textureHelper = helper
+            textureMode = helper != null && nativeHandle != 0L
+            if (textureMode) {
+                textureBridge = AgoraTextureBridge(helper!!, engine)
+            }
+
+            Log.i(
+                TAG,
+                "Texture streaming setup: shareCtx=$nativeHandle helper=${textureHelper != null} textureMode=$textureMode"
+            )
+        } catch (t: Throwable) {
+            textureMode = false
+            textureHelper = null
+            textureBridge = null
+            Log.w(TAG, "Texture streaming setup failed; CPU fallback will be used", t)
+        }
+    }
+
+    private fun configureEncoder() {
+        val config = VideoEncoderConfiguration(
+            VideoEncoderConfiguration.VideoDimensions(STREAM_WIDTH, STREAM_HEIGHT),
+            VideoEncoderConfiguration.FRAME_RATE.FRAME_RATE_FPS_30,
+            STREAM_BITRATE_KBPS,
+            VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_FIXED_PORTRAIT
+        )
+        config.minBitrate = STREAM_MIN_BITRATE_KBPS
+        config.mirrorMode = VideoEncoderConfiguration.MIRROR_MODE_TYPE.MIRROR_MODE_DISABLED
+        rtcEngine?.setVideoEncoderConfiguration(config)
+        Log.i(
+            TAG,
+            "Agora encoder: ${STREAM_WIDTH}x$STREAM_HEIGHT ${STREAM_BITRATE_KBPS}kbps min=$STREAM_MIN_BITRATE_KBPS"
+        )
+    }
+
+    private fun armTextureCallback() {
+        NosmaiSDK.setTextureFrameCallback { texId, width, height, timestampNs, fence ->
+            val bridge = textureBridge
+            if (!inChannel || bridge == null || !textureMode) {
+                NosmaiSDK.releaseStreamSlot(texId)
+                return@setTextureFrameCallback
+            }
+            bridge.pushCopy(texId, width, height, timestampNs) {
+                NosmaiSDK.releaseStreamSlot(texId)
+            }
+            frameCount++
+            if (frameCount % 90 == 0) {
+                Log.i(TAG, "Pushed texture frames=$frameCount size=${width}x$height")
+            }
+        }
+    }
+
+    private fun armPixelCallback() {
+        NosmaiSDK.setFrameCallback { frame ->
+            if (!inChannel || frame?.pixelBuffer == null) return@setFrameCallback
+            pushPixelFrame(
+                frame.pixelBuffer,
+                frame.width,
+                frame.height,
+                frame.timestampNs,
+                frame.format,
+                0
+            )
+        }
+    }
+
+    private fun clearStreamCallbacks() {
+        try {
+            NosmaiSDK.setTextureFrameCallback(null)
+        } catch (_: Throwable) {
+        }
+        try {
+            NosmaiSDK.setFrameCallback(null)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun pushPixelFrame(
+        frameData: ByteArray,
+        width: Int,
+        height: Int,
+        timestampNs: Long,
+        format: Int,
+        rotation: Int
+    ) {
+        val engine = rtcEngine ?: return
+        val executor = pixelExecutor ?: return
+        if (!inChannel || format != 1) return
+
+        executor.execute {
+            try {
+                val ySize = width * height
+                val uvWidth = (width + 1) / 2
+                val uvHeight = (height + 1) / 2
+                val uSize = uvWidth * uvHeight
+                val vSize = uSize
+                val expectedSize = ySize + uSize + vSize
+                if (frameData.size < expectedSize) return@execute
+
+                val dataY = ByteBuffer.allocateDirect(ySize)
+                val dataU = ByteBuffer.allocateDirect(uSize)
+                val dataV = ByteBuffer.allocateDirect(vSize)
+                dataY.put(frameData, 0, ySize)
+                dataU.put(frameData, ySize, uSize)
+                dataV.put(frameData, ySize + uSize, vSize)
+                dataY.rewind()
+                dataU.rewind()
+                dataV.rewind()
+
+                val buffer = JavaI420Buffer.wrap(
+                    width,
+                    height,
+                    dataY,
+                    width,
+                    dataU,
+                    uvWidth,
+                    dataV,
+                    uvWidth,
+                    null
+                )
+                val videoFrame = VideoFrame(buffer, rotation, timestampNs)
+                engine.pushExternalVideoFrame(videoFrame)
+                videoFrame.release()
+                frameCount++
+                if (frameCount % 90 == 0) {
+                    Log.i(TAG, "Pushed I420 frames=$frameCount size=${width}x$height")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "pushPixelFrame failed", t)
+            }
+        }
     }
 }

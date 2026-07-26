@@ -56,10 +56,10 @@ class NosmaiAgoraBridge {
   static Future<int> getNativeHandle({
     required String agoraAppId,
   }) async {
-    _nativeHandle = await NosmaiAgoraBridgePlatform.instance.initializeNative(agoraAppId);
+    _nativeHandle =
+        await NosmaiAgoraBridgePlatform.instance.initializeNative(agoraAppId);
     return _nativeHandle!;
   }
-
 
   /// Dispose native Nosmai resources
   ///
@@ -77,6 +77,29 @@ class NosmaiAgoraBridge {
       await NosmaiAgoraBridgePlatform.instance.dispose();
       _nativeHandle = null;
     }
+  }
+
+  /// Start publishing the Nosmai processed camera output to Agora.
+  ///
+  /// Android uses the same texture-first path as the native Nosmai demo when
+  /// available. Call [getNativeHandle] before Nosmai SDK initialization, create
+  /// the shared Agora engine from that handle, then call this after the Nosmai
+  /// preview is visible.
+  static Future<bool> startStreaming({
+    required String channelName,
+    String? token,
+    int uid = 0,
+  }) {
+    return NosmaiAgoraBridgePlatform.instance.startStreaming(
+      channelName: channelName,
+      token: token,
+      uid: uid,
+    );
+  }
+
+  /// Stop publishing and return Nosmai to preview-only rendering.
+  static Future<bool> stopStreaming() {
+    return NosmaiAgoraBridgePlatform.instance.stopStreaming();
   }
 
   /// Check if native bridge is initialized

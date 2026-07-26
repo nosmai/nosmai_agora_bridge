@@ -47,6 +47,32 @@ class NosmaiAgoraBridgePlugin : FlutterPlugin, MethodCallHandler {
                     result.error("DISPOSE_ERROR", "Failed to dispose: ${e.message}", null)
                 }
             }
+            "native_start_streaming" -> {
+                val controller = videoRawDataController
+                if (controller == null) {
+                    result.error("NOT_INITIALIZED", "Call getNativeHandle before startStreaming", null)
+                    return
+                }
+                val channelName = call.argument<String>("channelName")
+                if (channelName.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "channelName is required", null)
+                    return
+                }
+                val token = call.argument<String>("token")
+                val uid = call.argument<Int>("uid") ?: 0
+                try {
+                    result.success(controller.startStreaming(token, channelName, uid))
+                } catch (e: Exception) {
+                    result.error("START_STREAM_ERROR", "Failed to start stream: ${e.message}", null)
+                }
+            }
+            "native_stop_streaming" -> {
+                try {
+                    result.success(videoRawDataController?.stopStreaming() ?: true)
+                } catch (e: Exception) {
+                    result.error("STOP_STREAM_ERROR", "Failed to stop stream: ${e.message}", null)
+                }
+            }
             else -> {
                 result.notImplemented()
             }
