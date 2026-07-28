@@ -51,8 +51,15 @@ class VideoRawDataController(context: Context, myAppId: String) {
         override fun onLeaveChannel(stats: RtcStats?) {
             super.onLeaveChannel(stats)
             inChannel = false
-            clearStreamCallbacks()
-            Log.i(TAG, "Agora left channel")
+            // Only disarm if the app actually asked to stop. A leave callback can
+            // arrive while a stream is still wanted (e.g. a rejected duplicate
+            // join leaves the channel it never really held); clearing callbacks
+            // unconditionally there would silence the producer for the stream
+            // that IS running.
+            if (!streamingRequested) {
+                clearStreamCallbacks()
+            }
+            Log.i(TAG, "Agora left channel (streamingRequested=$streamingRequested)")
         }
 
         override fun onError(err: Int) {
@@ -71,7 +78,13 @@ class VideoRawDataController(context: Context, myAppId: String) {
 
         rtcEngine?.enableVideo()
         rtcEngine?.setLocalVideoMirrorMode(Constants.VIDEO_MIRROR_MODE_DISABLED)
-        setupTextureMode()
+        // Register the Nosmai↔Agora EGL share context ONCE, up-front. This MUST
+        // happen before the Nosmai GL context is created (else the share group is
+        // wrong → black remote), and it is a one-time SDK registration — never
+        // un-set per stream. Only the TextureBufferHelper (the GL thread that
+        // contends the shared context) is created/destroyed per stream. See
+        // registerShareContext() / createTextureHelper() / releaseTextureHelper().
+        registerShareContext()
         configureEncoder()
     }
 
@@ -81,9 +94,31 @@ class VideoRawDataController(context: Context, myAppId: String) {
         val engine = rtcEngine ?: return false
         if (channelName.isBlank()) return false
 
+        // RE-ENTRANCY GUARD. The Dart caller is driven by a socket event
+        // ("stream-started") which the server can emit more than once, so this
+        // could be entered twice milliseconds apart. Without the guard the second
+        // call re-ran the whole setup while the first joinChannel was still in
+        // flight; Agora rejected it with -17 (ERR_JOIN_CHANNEL_REJECTED) and the
+        // failure path below then cleared the texture callback and reset the
+        // render mode to PREVIEW_ONLY — tearing down the FIRST attempt, which was
+        // about to succeed. The channel joined, but the frame producer was off:
+        // zero frames pushed, black remote, no error and no frozen frame.
+        if (streamingRequested) {
+            Log.w(TAG, "startStreaming ignored: already streaming/joining channel=$channelName")
+            return true
+        }
+
         streamingRequested = true
         frameCount = 0
         clearStreamCallbacks()
+        // Create the TextureBufferHelper GL thread FRESH for this stream. Doing it
+        // per-stream (instead of once at init) is the fix for the 2nd-go-live
+        // freeze→black: previously the helper GL thread + its Nosmai EGL share-group
+        // binding persisted across stopStreaming and kept contending the single
+        // Nosmai GL worker, so on the next go-live the platform-thread surface-
+        // release SyncRunWithContext head-of-line-blocked ~2.8s behind the saturated,
+        // share-context-contended worker → frozen frame → permanent black.
+        createTextureHelper()
         NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.DUAL_OUTPUT)
 
         engine.setExternalVideoSource(
@@ -126,8 +161,29 @@ class VideoRawDataController(context: Context, myAppId: String) {
         streamingRequested = false
         clearStreamCallbacks()
         NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.PREVIEW_ONLY)
+        // Disarm the external video source so a reused engine (the app keeps the
+        // engine alive across streams) re-arms cleanly on the next startStreaming
+        // instead of inheriting a stale external-source registration.
+        try {
+            rtcEngine?.setExternalVideoSource(
+                false,
+                textureMode,
+                Constants.ExternalVideoSourceType.VIDEO_FRAME
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "stopStreaming: disarm external source failed: ${t.message}")
+        }
         val result = rtcEngine?.leaveChannel() ?: 0
         inChannel = false
+        // Tear down the TextureBufferHelper GL thread + its Nosmai share-group
+        // binding NOW (not at dispose). This is the core of the 2nd-go-live freeze
+        // fix: the contending helper GL thread must NOT survive across the
+        // go-live/end-live cycle. The Nosmai render mode is already back to
+        // PREVIEW_ONLY (above), so after this the Nosmai GL worker runs uncontended
+        // and the next createSinkPreviewTexture's platform-thread Sync drains fast.
+        // The share-context REGISTRATION stays (one-time); only the helper thread
+        // goes. A fresh helper is created in the next startStreaming.
+        releaseTextureHelper()
         return result == 0
     }
 
@@ -141,17 +197,9 @@ class VideoRawDataController(context: Context, myAppId: String) {
         } catch (_: Throwable) {
         }
 
-        try {
-            textureBridge?.release()
-        } catch (_: Throwable) {
-        }
-        textureBridge = null
-
-        try {
-            textureHelper?.dispose()
-        } catch (_: Throwable) {
-        }
-        textureHelper = null
+        // stopStreaming already tore down the helper (releaseTextureHelper); call
+        // again defensively in case dispose is reached without a prior stream.
+        releaseTextureHelper()
         textureMode = false
 
         pixelExecutor?.shutdown()
@@ -161,16 +209,23 @@ class VideoRawDataController(context: Context, myAppId: String) {
         RtcEngine.destroy()
     }
 
-    private fun setupTextureMode() {
-        val engine = rtcEngine ?: return
+    // Whether the one-time Nosmai↔Agora EGL share-context registration succeeded.
+    // The share context is a one-time SDK registration (must precede the Nosmai GL
+    // context); the TextureBufferHelper GL thread is created/destroyed per stream.
+    private var shareContextReady = false
+
+    /**
+     * ONE-TIME: load libnosmai and register the Agora EGL context as the Nosmai
+     * share context. Must run before the Nosmai GL context is created. Does NOT
+     * create the TextureBufferHelper (that is per-stream — see createTextureHelper).
+     */
+    private fun registerShareContext() {
         try {
             try {
                 System.loadLibrary("nosmai")
                 Log.i(TAG, "libnosmai loaded before Agora share-context registration")
             } catch (t: Throwable) {
-                textureMode = false
-                textureHelper = null
-                textureBridge = null
+                shareContextReady = false
                 Log.w(TAG, "Early libnosmai load failed; CPU fallback will be used", t)
                 return
             }
@@ -179,24 +234,60 @@ class VideoRawDataController(context: Context, myAppId: String) {
                 EglBaseProvider.instance().getRootEglBase().getEglBaseContext()
             val nativeHandle = agoraContext.getNativeEglContext()
             NosmaiSDK.setAgoraShareContext(nativeHandle)
+            shareContextReady = nativeHandle != 0L
+            Log.i(TAG, "Share-context registered: shareCtx=$nativeHandle ready=$shareContextReady")
+        } catch (t: Throwable) {
+            shareContextReady = false
+            Log.w(TAG, "Share-context registration failed; CPU fallback will be used", t)
+        }
+    }
 
+    /**
+     * PER-STREAM: create the TextureBufferHelper GL thread + the texture bridge.
+     * Idempotent (reuses an existing helper if somehow still alive). Called from
+     * startStreaming so the contending helper thread only exists while streaming.
+     */
+    private fun createTextureHelper() {
+        val engine = rtcEngine ?: return
+        if (!shareContextReady) {
+            textureMode = false
+            Log.w(TAG, "createTextureHelper: share context not ready; CPU fallback")
+            return
+        }
+        if (textureHelper != null) {
+            // Already have one (e.g. defensive double-call) — keep it.
+            textureMode = textureBridge != null
+            return
+        }
+        try {
+            val agoraContext: EglBase.Context =
+                EglBaseProvider.instance().getRootEglBase().getEglBaseContext()
             val helper = TextureBufferHelper.create("nosmai-flutter-agora", agoraContext)
             textureHelper = helper
-            textureMode = helper != null && nativeHandle != 0L
+            textureMode = helper != null
             if (textureMode) {
                 textureBridge = AgoraTextureBridge(helper!!, engine)
             }
-
-            Log.i(
-                TAG,
-                "Texture streaming setup: shareCtx=$nativeHandle helper=${textureHelper != null} textureMode=$textureMode"
-            )
+            Log.i(TAG, "createTextureHelper: helper=${textureHelper != null} textureMode=$textureMode")
         } catch (t: Throwable) {
             textureMode = false
             textureHelper = null
             textureBridge = null
-            Log.w(TAG, "Texture streaming setup failed; CPU fallback will be used", t)
+            Log.w(TAG, "createTextureHelper failed; CPU fallback will be used", t)
         }
+    }
+
+    /**
+     * PER-STREAM: tear down the TextureBufferHelper GL thread + bridge so it stops
+     * contending the Nosmai GL worker via the shared EGL context. Safe to call when
+     * already torn down. The share-context registration is NOT touched.
+     */
+    private fun releaseTextureHelper() {
+        try { textureBridge?.release() } catch (_: Throwable) {}
+        textureBridge = null
+        try { textureHelper?.dispose() } catch (_: Throwable) {}
+        textureHelper = null
+        Log.i(TAG, "releaseTextureHelper: helper GL thread torn down (share-context kept)")
     }
 
     private fun configureEncoder() {
