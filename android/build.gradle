@@ -19,6 +19,10 @@ allprojects {
         google()
         mavenCentral()
         maven { url 'https://download.agora.io/sdk/release/' }
+        // Resolves libs/nosmai-release.aar for the compileOnly fallback used when
+        // no ':nosmai' source module is present (i.e. a host app consuming this
+        // repo by path). Without this the fallback cannot resolve.
+        flatDir { dirs "${projectDir}/libs" }
     }
 }
 
@@ -49,12 +53,24 @@ android {
     }
 
     dependencies {
-        // DEV-ONLY (development phase): compile against the SDK SOURCE module so new
-        // SDK APIs are available without rebuilding the .aar. The host app's
-        // settings.gradle(.kts) must include ':nosmai'. TO REVERT for .aar builds /
-        // distribution: uncomment the .aar line, comment out compileOnly project(':nosmai').
-        // compileOnly(name: 'nosmai-release', ext: 'aar')
-        compileOnly project(':nosmai')
+        // AUTO-SELECT the SDK binding so this bridge works BOTH when dev-linked
+        // against the SDK source module and when consumed by a host app.
+        //
+        // - ':nosmai' present (this repo's own example): source-link, so SDK
+        //   source edits apply without rebuilding the .aar.
+        // - ':nosmai' absent (a host app such as tikshot, which depends on this
+        //   repo by path and has no SDK module): fall back to the prebuilt
+        //   libs/nosmai-release.aar via the flatDir repository above.
+        //
+        // Hardcoding project(':nosmai') broke any host app that consumes this
+        // repo directly ("Project with path ':nosmai' could not be found").
+        // These are compileOnly: the SDK classes are provided at runtime by the
+        // host app's own AAR, so we must not package a second copy.
+        if (findProject(':nosmai') != null) {
+            compileOnly project(':nosmai')
+        } else {
+            compileOnly(name: 'nosmai-release', ext: 'aar')
+        }
         compileOnly("io.agora.rtc:full-sdk:4.5.2")
 
         testImplementation("org.jetbrains.kotlin:kotlin-test")

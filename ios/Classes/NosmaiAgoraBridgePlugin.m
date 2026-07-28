@@ -48,6 +48,54 @@
                                  details:nil]);
     }
   }
+  // Dart has always invoked native_start_streaming / native_stop_streaming
+  // (nosmai_agora_bridge_method_channel.dart:39, :50) and Android has always
+  // handled them (NosmaiAgoraBridgePlugin.kt:50, :69). iOS had no branch for
+  // either, so both calls fell through to FlutterMethodNotImplemented. Argument
+  // names and error codes below match Android exactly.
+  else if ([@"native_start_streaming" isEqualToString:call.method]) {
+    VideoRawDataController* controller = self.videoController;
+    if (controller == nil) {
+      result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                                 message:@"Call getNativeHandle before startStreaming"
+                                 details:nil]);
+      return;
+    }
+    NSString* channelName = call.arguments[@"channelName"];
+    if (![channelName isKindOfClass:[NSString class]] || channelName.length == 0) {
+      result([FlutterError errorWithCode:@"INVALID_ARGS"
+                                 message:@"channelName is required"
+                                 details:nil]);
+      return;
+    }
+    NSString* token = call.arguments[@"token"];
+    if (![token isKindOfClass:[NSString class]]) {
+      token = nil;  // Dart sends an explicit null for tokenless channels
+    }
+    NSNumber* uid = call.arguments[@"uid"];
+    @try {
+      BOOL started = [controller startStreaming:token
+                                        channel:channelName
+                                            uid:(NSUInteger)[uid unsignedIntegerValue]];
+      result(@(started));
+    } @catch (NSException *exception) {
+      result([FlutterError errorWithCode:@"START_STREAM_ERROR"
+                                 message:[NSString stringWithFormat:@"Failed to start stream: %@", exception.reason]
+                                 details:nil]);
+    }
+  }
+  else if ([@"native_stop_streaming" isEqualToString:call.method]) {
+    @try {
+      VideoRawDataController* controller = self.videoController;
+      // Android returns true when there is no controller (nothing to stop is
+      // not a failure) — keep the same contract.
+      result(@(controller == nil ? YES : [controller stopStreaming]));
+    } @catch (NSException *exception) {
+      result([FlutterError errorWithCode:@"STOP_STREAM_ERROR"
+                                 message:[NSString stringWithFormat:@"Failed to stop stream: %@", exception.reason]
+                                 details:nil]);
+    }
+  }
   else if ([@"notify_camera_switch" isEqualToString:call.method]) {
     @try {
       [self.videoController notifyCameraSwitch];
