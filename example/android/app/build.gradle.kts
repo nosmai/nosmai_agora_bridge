@@ -8,7 +8,11 @@ plugins {
 android {
     namespace = "com.example.nosmai_agora_bridge_example"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Pinned rather than flutter.ndkVersion: that resolves to 28.2.13676358,
+    // which is present in the SDK but CORRUPT (no source.properties), so
+    // configuration fails with CXX1101 before anything compiles. 29.0.14206865
+    // is a complete install and is what the Nosmai SDK itself is built with.
+    ndkVersion = "29.0.14206865"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -41,4 +45,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // The camera SDK plugin declares this AAR compileOnly, which keeps the 62MB
+    // binary out of the pub.dev package but means it is NOT packaged into the
+    // app. The host has to add it as a real (runtime) dependency or the app
+    // builds and then crashes on first native call with UnsatisfiedLinkError.
+    implementation(files("libs/nosmai-release.aar"))
 }

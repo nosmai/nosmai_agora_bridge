@@ -2,6 +2,11 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // The pub.dev nosmai_camera_sdk declares the native AAR as
+        // compileOnly(name: 'nosmai-release') and deliberately does NOT bundle
+        // it, so every host app must supply it. Without this flatDir the build
+        // fails with "Could not find :nosmai-release:".
+        flatDir { dirs(rootProject.projectDir.resolve("app/libs")) }
     }
 }
 

@@ -37,6 +37,20 @@ abstract class NosmaiAgoraBridgePlatform extends PlatformInterface {
     throw UnimplementedError('dispose() has not been implemented.');
   }
 
+  /// Start publishing the Nosmai processed camera output to Agora.
+  Future<bool> startStreaming({
+    required String channelName,
+    String? token,
+    int uid = 0,
+  }) {
+    throw UnimplementedError('startStreaming() has not been implemented.');
+  }
+
+  /// Stop publishing to Agora and return Nosmai to preview-only rendering.
+  Future<bool> stopStreaming() {
+    throw UnimplementedError('stopStreaming() has not been implemented.');
+  }
+
   /// Notify native side that camera was switched
   Future<void> notifyCameraSwitch() {
     throw UnimplementedError('notifyCameraSwitch() has not been implemented.');
