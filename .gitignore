@@ -31,3 +31,16 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# ── Example app: locally-supplied binaries and assets ────────────────────
+# The camera SDK's native AAR. The plugin declares it compileOnly, so every
+# host app supplies its own copy — download it from
+# github.com/nosmai/camera-sdk-android/releases and drop it here as
+# nosmai-release.aar (that exact name is what the plugin resolves).
+# Not committed: the repo already tracks a copy at android/libs/, and a second
+# 35MB binary in git history helps nobody.
+example/android/app/libs/
+
+# Filter packages used to try the example. These are content, not code — bring
+# your own .nosmai packages rather than pulling 24MB through the repo.
+example/assets/nosmai_filters/

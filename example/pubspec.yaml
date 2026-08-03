@@ -25,6 +25,23 @@ dependencies:
     # the parent directory to use the current plugin's version.
     path: ../
 
+  # Agora RTC — the example drives the engine directly; the bridge only feeds it
+  # filtered frames. Version matches what tikshot ships so behaviour lines up.
+  agora_rtc_engine: ^6.5.3
+
+  # Camera permission for the preview.
+  permission_handler: ^12.0.1
+
+  # ── Nosmai camera SDK ─────────────────────────────────────────────────────
+  # Published release by default, so a fresh clone builds with no local setup.
+  #
+  # To test against LOCAL SDK changes, comment out the hosted line and uncomment
+  # the path override below, then `flutter pub get`. Swapping back is the same
+  # two-line edit — no other file changes.
+  nosmai_camera_sdk: ^3.0.6
+  # nosmai_camera_sdk:
+  #   path: ../../camsdk_v2
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -52,6 +69,29 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # ── Filter assets (optional) ──────────────────────────────────────────
+  # COMMENTED OUT ON PURPOSE. These directories are gitignored, so a fresh
+  # clone does not have them — and Flutter FAILS THE BUILD on a declared asset
+  # directory that does not exist, rather than skipping it.
+  #
+  # To try the example with filters:
+  #   1. drop .nosmai packages into example/assets/nosmai_filters/<name>/
+  #   2. uncomment the matching lines below (one per directory — Flutter does
+  #      NOT recurse, so a single `assets/nosmai_filters/` line silently
+  #      bundles nothing and getLocalFilters() returns an empty list)
+  #   3. flutter pub get
+  #
+  # assets:
+  #   - assets/nosmai_filters/data_glitch/
+  #   - assets/nosmai_filters/fish_eye/
+  #   - assets/nosmai_filters/gameboy/
+  #   - assets/nosmai_filters/ghost_frame/
+  #   - assets/nosmai_filters/neon_vibe/
+  #   - assets/nosmai_filters/pixelated/
+  #   - assets/nosmai_filters/reindeer_face/
+  #   - assets/nosmai_filters/thermal_cam/
+  #   - assets/nosmai_filters/wolf_boy/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

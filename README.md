@@ -41,15 +41,27 @@ flutter pub get
 
 ## Usage
 
-### 1. Initialize Nosmai SDK
+### Order matters
 
-```dart
-import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
+Two rules cause almost every "the bridge doesn't work" report. Both fail
+*silently* — the app runs, the stream connects, and the result is simply wrong.
 
-await NosmaiFlutter.initialize('YOUR_NOSMAI_KEY');
-```
+**1. `getNativeHandle()` must run BEFORE `NosmaiFlutter.initialize()`.**
 
-### 2. Get Native Handle
+`getNativeHandle` creates Agora's engine and stashes its EGL context as the
+share context. Nosmai's GL context has to be created *after* that so it joins
+the same share group. Initialize Nosmai first and its textures are invisible to
+Agora's encoder — **the remote side shows black** while local preview looks
+perfect.
+
+**2. Publish with `NosmaiAgoraBridge.startStreaming()`, not
+`rtcEngine.joinChannel()`.**
+
+`startStreaming` joins the channel *and* switches Agora to the Nosmai-supplied
+texture. Calling `joinChannel` directly publishes Agora's **own raw camera** —
+the stream works and shows your face, but **no filter is ever visible remotely**.
+
+### 1. Get the native handle (FIRST)
 
 ```dart
 import 'package:nosmai_agora_bridge/nosmai_agora_bridge.dart';
@@ -59,165 +71,140 @@ final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
 );
 ```
 
-### 3. Create Agora Engine
+### 2. Initialize Nosmai (AFTER the handle)
+
+```dart
+import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
+
+// Licence keys are platform-specific and bound to your bundle id.
+await NosmaiFlutter.initialize(
+  Platform.isIOS ? 'YOUR_NOSMAI_IOS_KEY' : 'YOUR_NOSMAI_ANDROID_KEY',
+);
+```
+
+### 3. Create and configure the Agora engine
 
 ```dart
 _engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
-```
 
-### 4. Use Agora Normally
-
-```dart
 await _engine.initialize(RtcEngineContext(
   appId: 'YOUR_AGORA_APP_ID',
   channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
 ));
 
 await _engine.enableVideo();
-await _engine.startPreview();
 
-await _engine.joinChannel(
-  token: token,
-  channelId: channelId,
+// NO startPreview(). Nosmai owns the camera in this model — see step 5.
+```
+
+### 4. Start streaming through the bridge
+
+```dart
+final ok = await NosmaiAgoraBridge.startStreaming(
+  channelName: 'YOUR_CHANNEL',
+  // null, not '' — omit entirely for a project with no certificate.
+  token: (token != null && token.isNotEmpty) ? token : null,
   uid: 0,
-  options: const ChannelMediaOptions(
-    clientRoleType: ClientRoleType.clientRoleBroadcaster,
-  ),
 );
 ```
 
-### 5. Apply Filters
+### 5. Show the local preview
+
+Use **Nosmai's** preview widget, not `AgoraVideoView`:
 
 ```dart
-// Get available filters
+const NosmaiCameraPreview()
+```
+
+Nosmai owns the camera, so `AgoraVideoView(canvas: VideoCanvas(uid: 0))` renders
+Agora's own capture — the *unfiltered* camera, or nothing at all. The filtered
+frames only exist inside Nosmai's pipeline.
+
+### 6. Apply filters
+
+```dart
 final filters = await NosmaiFlutter.instance.getLocalFilters();
 
-// Apply a filter (appears in live stream)
+// applyFilter handles BOTH shader filters and AR effects — the SDK routes on
+// the package's manifest type, so there is no separate applyEffect call.
 await NosmaiFlutter.instance.applyFilter(filters[0].path);
 
-// Remove filters
 await NosmaiFlutter.instance.removeAllFilters();
 ```
 
-### 6. Switch Camera
+Filters can be applied and swapped **while streaming**; remote viewers see the
+change immediately.
+
+> **Bundling filter assets:** declare **one pubspec entry per filter directory**.
+> Flutter does not recurse into subdirectories, so a single
+> `- assets/nosmai_filters/` line bundles nothing and `getLocalFilters()`
+> returns an empty list with no error.
+
+### 7. Switch camera
 
 ```dart
-// Switch camera and notify Nosmai
-await _engine.switchCamera();
+// Through NOSMAI, not _engine.switchCamera() — Nosmai owns the camera, so the
+// Agora call would flip a capture device that is not being published.
+await NosmaiFlutter.instance.switchCamera();
 await NosmaiAgoraBridge.notifyCameraSwitch();
 ```
 
-**Important:** Always call `notifyCameraSwitch()` after switching camera to ensure Nosmai filters work correctly on the new camera.
-
-### 7. Cleanup
+### 8. Cleanup
 
 ```dart
+// stopStreaming FIRST: the bridge owns channel membership and must release its
+// texture helper before the engine goes away. The other order leaves the helper
+// holding a share-group reference to a dead engine — this is the cause of the
+// "second go-live freezes, then goes black" failure.
+await NosmaiAgoraBridge.stopStreaming();
 await _engine.leaveChannel();
 await _engine.release();
 await NosmaiAgoraBridge.disposeNative();
 ```
 
-## Complete Example
+### Android setup
 
-```dart
-import 'package:flutter/material.dart';
-import 'package:agora_rtc_engine/agora_rtc_engine.dart';
-import 'package:nosmai_agora_bridge/nosmai_agora_bridge.dart';
-import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
-import 'package:permission_handler/permission_handler.dart';
+The camera SDK's native AAR is declared `compileOnly`, so **your app must supply
+it**. Download it from
+[camera-sdk-android releases](https://github.com/nosmai/camera-sdk-android/releases)
+and place it at `android/app/libs/nosmai-release.aar` (that exact filename is
+what the plugin resolves), then:
 
-class LiveStreamScreen extends StatefulWidget {
-  @override
-  State<LiveStreamScreen> createState() => _LiveStreamScreenState();
+```kotlin
+// android/build.gradle.kts
+allprojects {
+    repositories {
+        flatDir { dirs(rootProject.projectDir.resolve("app/libs")) }
+    }
 }
 
-class _LiveStreamScreenState extends State<LiveStreamScreen> {
-  RtcEngine? _engine;
-  bool _isJoined = false;
-  Set<int> _remoteUids = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _initAgora();
-  }
-
-  Future<void> _initAgora() async {
-    await [Permission.camera, Permission.microphone].request();
-
-    // Initialize Nosmai
-    await NosmaiFlutter.initialize('YOUR_NOSMAI_KEY');
-
-    // Get native handle
-    final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
-      agoraAppId: 'YOUR_AGORA_APP_ID',
-    );
-
-    // Create engine with shared handle
-    _engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
-
-    // Initialize engine
-    await _engine!.initialize(RtcEngineContext(
-      appId: 'YOUR_AGORA_APP_ID',
-      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-    ));
-
-    // Register event handlers
-    _engine!.registerEventHandler(
-      RtcEngineEventHandler(
-        onJoinChannelSuccess: (connection, elapsed) {
-          setState(() => _isJoined = true);
-        },
-        onUserJoined: (connection, remoteUid, elapsed) {
-          setState(() => _remoteUids.add(remoteUid));
-        },
-        onUserOffline: (connection, remoteUid, reason) {
-          setState(() => _remoteUids.remove(remoteUid));
-        },
-      ),
-    );
-
-    // Start video
-    await _engine!.enableVideo();
-    await _engine!.startPreview();
-
-    // Join channel
-    await _engine!.joinChannel(
-      token: 'YOUR_TOKEN',
-      channelId: 'test_channel',
-      uid: 0,
-      options: const ChannelMediaOptions(
-        clientRoleType: ClientRoleType.clientRoleBroadcaster,
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _engine?.leaveChannel();
-    _engine?.release();
-    NosmaiAgoraBridge.disposeNative();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          if (_isJoined)
-            AgoraVideoView(
-              controller: VideoViewController(
-                rtcEngine: _engine!,
-                canvas: const VideoCanvas(uid: 0),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+// android/app/build.gradle.kts — compileOnly means it is NOT packaged;
+// without this the app builds and then dies on the first native call.
+dependencies {
+    implementation(files("libs/nosmai-release.aar"))
 }
 ```
+
+## Complete Example
+
+A full, working implementation lives in [`example/lib/main.dart`](example/lib/main.dart)
+— streaming, a live filter picker, camera switch and teardown, all in the order
+described above.
+
+Deliberately **not** duplicated here: an inline copy drifts from the real code,
+and the previous version of this README taught the reversed init order and a
+direct `joinChannel` call, both of which silently break filtering.
+
+To run it:
+
+1. Add your credentials at the top of `example/lib/main.dart`
+   (`_appId`, `_channelName`, `_nosmaiKey`).
+2. Drop the SDK AAR at `example/android/app/libs/nosmai-release.aar`
+   (see [Android setup](#android-setup)).
+3. Optionally add `.nosmai` packages under
+   `example/assets/nosmai_filters/<name>/` and uncomment the matching lines in
+   `example/pubspec.yaml`.
+4. `flutter run`
 
 ## Applying Filters
 
@@ -311,22 +298,22 @@ A: Native video processing is highly optimized with minimal performance impact.
 
 ## Important Notes
 
-### Local Preview Configuration
+### Local preview
 
-Currently, for the local preview to display correctly, you need to configure the `VideoCanvas` with specific render and mirror settings:
+Use `NosmaiCameraPreview`, not `AgoraVideoView`:
 
 ```dart
-AgoraVideoView(
-  controller: VideoViewController(
-    rtcEngine: _engine,
-    canvas: const VideoCanvas(
-      uid: 0,
-      renderMode: RenderModeType.renderModeFit,
-      mirrorMode: VideoMirrorModeType.videoMirrorModeDisabled,
-    ),
-  ),
-),
+const NosmaiCameraPreview()
 ```
+
+Nosmai owns the camera in this integration, so an `AgoraVideoView` bound to
+`VideoCanvas(uid: 0)` renders Agora's own capture — the *unfiltered* camera, or
+nothing at all once Nosmai has the device. Filtered frames exist only inside
+Nosmai's pipeline, and only `NosmaiCameraPreview` reads from it.
+
+(Earlier versions of this document recommended an `AgoraVideoView` with specific
+`renderMode`/`mirrorMode` settings. That advice applied to the raw-camera path
+and does not apply here.)
 
 ### Known Issues
 
