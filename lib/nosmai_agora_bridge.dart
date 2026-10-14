@@ -7,6 +7,10 @@ import 'nosmai_agora_bridge_platform_interface.dart';
 /// allowing you to apply Nosmai filters to Agora video streams without writing
 /// any platform-specific code.
 ///
+/// The example below describes the iOS observer flow. On Android, initialize
+/// this bridge before Nosmai, show the Nosmai preview, then use [startStreaming]
+/// and [stopStreaming] instead of joining/leaving directly on the engine.
+///
 /// Example:
 /// ```dart
 /// // Get native handle for Nosmai integration
@@ -84,7 +88,9 @@ class NosmaiAgoraBridge {
   /// Android uses the same texture-first path as the native Nosmai demo when
   /// available. Call [getNativeHandle] before Nosmai SDK initialization, create
   /// the shared Agora engine from that handle, then call this after the Nosmai
-  /// preview is visible.
+  /// preview is visible. A true result means the join request was accepted;
+  /// observe Agora events for connection success. Stop and wait for the leave
+  /// event before changing channel. Older texture-capable SDKs use I420 fallback.
   static Future<bool> startStreaming({
     required String channelName,
     String? token,
@@ -98,6 +104,7 @@ class NosmaiAgoraBridge {
   }
 
   /// Stop publishing and return Nosmai to preview-only rendering.
+  /// Stop before shutting down the Nosmai camera or SDK.
   static Future<bool> stopStreaming() {
     return NosmaiAgoraBridgePlatform.instance.stopStreaming();
   }

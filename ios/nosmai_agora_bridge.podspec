@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'nosmai_agora_bridge'
-  s.version          = '0.0.1'
+  s.version          = '0.1.0-beta.1'
   s.summary          = 'Nosmai filters integration for Agora RTC Engine'
   s.description      = <<-DESC
 Easy integration of Nosmai filters with Agora RTC Engine for Flutter.

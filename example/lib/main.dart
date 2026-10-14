@@ -1,12 +1,13 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:io';
+
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter/material.dart';
 import 'package:nosmai_agora_bridge/nosmai_agora_bridge.dart';
-import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
+import 'package:nosmai_effects_sdk/nosmai_effects_sdk.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -14,7 +15,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nosmai Agora Bridge Example',
+      title: 'Nosmai Agora Bridge Beta',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
@@ -32,192 +33,227 @@ class LiveStreamScreen extends StatefulWidget {
 }
 
 class _LiveStreamScreenState extends State<LiveStreamScreen> {
-  RtcEngine? _engine;
-  bool _isJoined = false;
-  Set<int> _remoteUids = {};
+  static const _agoraAppId = 'YOUR_AGORA_APP_ID';
+  static const _agoraToken = 'YOUR_AGORA_TOKEN';
+  static const _channelName = 'test_channel';
+  static const _nosmaiLicenseKey = 'YOUR_NOSMAI_LICENSE_KEY';
 
-  final String _appId = 'YOUR_AGORA_APP_ID';
-  final String _token = 'YOUR_AGORA_TOKEN';
-  final String _channelName = 'test_channel';
-  final String _nosmaiKey = 'YOUR_NOSMAI_KEY';
+  RtcEngine? _engine;
+  final Set<int> _remoteUids = <int>{};
+  bool _ready = false;
+  bool _joined = false;
+  bool _streamStartRequested = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _initAgora();
+    unawaited(_initialize());
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final permissions = await <Permission>[
+        Permission.camera,
+        Permission.microphone,
+      ].request();
+      if (permissions.values.any((status) => !status.isGranted)) {
+        throw StateError('Camera and microphone permissions are required.');
+      }
+
+      if (Platform.isAndroid) {
+        await _createAgoraEngine();
+      }
+
+      final initialized = await NosmaiFlutter.initialize(_nosmaiLicenseKey);
+      if (!initialized) {
+        throw StateError('Nosmai SDK initialization failed.');
+      }
+
+      if (Platform.isIOS) {
+        await _createAgoraEngine();
+        await _engine!.enableVideo();
+        await _engine!.startPreview();
+        await _engine!.joinChannel(
+          token: _agoraToken,
+          channelId: _channelName,
+          uid: 0,
+          options: const ChannelMediaOptions(
+            clientRoleType: ClientRoleType.clientRoleBroadcaster,
+            channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+          ),
+        );
+      }
+
+      if (mounted) setState(() => _ready = true);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _createAgoraEngine() async {
+    final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
+      agoraAppId: _agoraAppId,
+    );
+    if (nativeHandle == 0) {
+      throw StateError('Agora native bridge initialization failed.');
+    }
+
+    final engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
+    await engine.initialize(
+      const RtcEngineContext(
+        appId: _agoraAppId,
+        channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+      ),
+    );
+    engine.registerEventHandler(
+      RtcEngineEventHandler(
+        onJoinChannelSuccess: (connection, elapsed) {
+          if (mounted) setState(() => _joined = true);
+        },
+        onLeaveChannel: (connection, stats) {
+          if (mounted) setState(() => _joined = false);
+        },
+        onUserJoined: (connection, remoteUid, elapsed) {
+          if (mounted) setState(() => _remoteUids.add(remoteUid));
+        },
+        onUserOffline: (connection, remoteUid, reason) {
+          if (mounted) setState(() => _remoteUids.remove(remoteUid));
+        },
+        onError: (errorCode, message) {
+          if (mounted) setState(() => _error = 'Agora $errorCode: $message');
+        },
+      ),
+    );
+    _engine = engine;
+  }
+
+  Future<void> _onAndroidPreviewReady() async {
+    if (!Platform.isAndroid || _streamStartRequested) return;
+    _streamStartRequested = true;
+    try {
+      final accepted = await NosmaiAgoraBridge.startStreaming(
+        channelName: _channelName,
+        token: _agoraToken,
+        uid: 0,
+      );
+      if (!accepted) {
+        throw StateError('Agora rejected the stream start request.');
+      }
+    } catch (error) {
+      _streamStartRequested = false;
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _applyFirstFilter() async {
+    try {
+      final filters = await NosmaiFlutter.instance.getLocalFilters();
+      if (filters.isEmpty) throw StateError('No local filters are available.');
+      await NosmaiFlutter.instance.applyFilter(filters.first.path);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (Platform.isAndroid) {
+      await NosmaiFlutter.instance.switchCamera();
+      return;
+    }
+    await _engine?.switchCamera();
+    await NosmaiAgoraBridge.notifyCameraSwitch();
+  }
+
+  Future<void> _shutdown() async {
+    try {
+      if (Platform.isAndroid) {
+        await NosmaiAgoraBridge.stopStreaming();
+      } else {
+        await _engine?.leaveChannel();
+      }
+      await _engine?.release();
+      await NosmaiAgoraBridge.disposeNative();
+    } catch (_) {
+      // The operating system will release any remaining camera resources.
+    }
   }
 
   @override
   void dispose() {
-    _disposeAgora();
+    unawaited(_shutdown());
     super.dispose();
-  }
-
-  Future<void> _initAgora() async {
-    await [Permission.camera, Permission.microphone].request();
-
-    // Initialize Nosmai SDK
-    await NosmaiFlutter.initialize(_nosmaiKey);
-
-    // Get native handle for Nosmai integration
-    final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
-      agoraAppId: _appId,
-    );
-
-    // Create Agora engine with shared native handle
-    _engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
-
-    // Initialize engine
-    await _engine!.initialize(RtcEngineContext(
-      appId: _appId,
-      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-    ));
-
-    // Register event handlers
-    _engine!.registerEventHandler(
-      RtcEngineEventHandler(
-        onJoinChannelSuccess: (connection, elapsed) {
-          setState(() => _isJoined = true);
-          debugPrint('Joined channel: ${connection.channelId}');
-        },
-        onUserJoined: (connection, remoteUid, elapsed) {
-          setState(() => _remoteUids.add(remoteUid));
-          debugPrint('User joined: $remoteUid');
-        },
-        onUserOffline: (connection, remoteUid, reason) {
-          setState(() => _remoteUids.remove(remoteUid));
-          debugPrint('User left: $remoteUid');
-        },
-      ),
-    );
-
-    // Enable video and start preview
-    await _engine!.enableVideo();
-    await _engine!.startPreview();
-
-    // Join channel
-    await _engine!.joinChannel(
-      token: _token,
-      channelId: _channelName,
-      uid: 0,
-      options: const ChannelMediaOptions(
-        clientRoleType: ClientRoleType.clientRoleBroadcaster,
-        channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-      ),
-    );
-  }
-
-  Future<void> _disposeAgora() async {
-    await _engine?.leaveChannel();
-    await _engine?.release();
-    await NosmaiAgoraBridge.disposeNative();
-  }
-
-  Future<void> _applyFilter() async {
-    final filters = await NosmaiFlutter.instance.getLocalFilters();
-
-    if (filters.isNotEmpty) {
-      await NosmaiFlutter.instance.applyFilter(filters[0].path);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Applied: ${filters[0].displayName}')),
-        );
-      }
-    }
-  }
-
-  Future<void> _removeFilters() async {
-    await NosmaiFlutter.instance.removeAllFilters();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Filters removed')),
-      );
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Nosmai + Agora Live Stream'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
+      appBar: AppBar(title: const Text('Nosmai + Agora Beta')),
       body: Stack(
-        children: [
-          Column(
-            children: [
-              Expanded(
-                child: Container(
-                  color: Colors.black,
-                  child: _isJoined
-                      ? AgoraVideoView(
-                          controller: VideoViewController(
-                            rtcEngine: _engine!,
-                            canvas: const VideoCanvas(uid: 0),
-                          ),
-                        )
-                      : const Center(
-                          child: CircularProgressIndicator(),
-                        ),
+        fit: StackFit.expand,
+        children: <Widget>[
+          if (_error != null)
+            Center(child: Text(_error!, textAlign: TextAlign.center))
+          else if (!_ready)
+            const Center(child: CircularProgressIndicator())
+          else if (Platform.isAndroid)
+            NosmaiCameraPreview(
+              onInitialized: _onAndroidPreviewReady,
+              onError: (message) => setState(() => _error = message),
+            )
+          else
+            AgoraVideoView(
+              controller: VideoViewController(
+                rtcEngine: _engine!,
+                canvas: const VideoCanvas(uid: 0),
+              ),
+            ),
+          if (_remoteUids.isNotEmpty && _engine != null)
+            Positioned(
+              right: 16,
+              top: 16,
+              width: 120,
+              height: 180,
+              child: AgoraVideoView(
+                controller: VideoViewController.remote(
+                  rtcEngine: _engine!,
+                  canvas: VideoCanvas(uid: _remoteUids.first),
+                  connection: const RtcConnection(channelId: _channelName),
                 ),
               ),
-
-              if (_remoteUids.isNotEmpty)
-                SizedBox(
-                  height: 200,
-                  child: AgoraVideoView(
-                    controller: VideoViewController.remote(
-                      rtcEngine: _engine!,
-                      canvas: VideoCanvas(uid: _remoteUids.first),
-                      connection: RtcConnection(channelId: _channelName),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-
-          Positioned(
-            bottom: 30,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                FloatingActionButton(
-                  heroTag: 'leave',
-                  onPressed: () async {
-                    await _engine?.leaveChannel();
-                    if (mounted) Navigator.pop(context);
-                  },
-                  backgroundColor: Colors.red,
-                  child: const Icon(Icons.call_end),
-                ),
-
-                FloatingActionButton(
-                  heroTag: 'switch',
-                  onPressed: () => _engine?.switchCamera(),
-                  backgroundColor: Colors.white,
-                  child: const Icon(Icons.cameraswitch, color: Colors.black),
-                ),
-
-                FloatingActionButton(
-                  heroTag: 'filter',
-                  onPressed: _applyFilter,
-                  backgroundColor: Colors.blue,
-                  child: const Icon(Icons.filter),
-                ),
-
-                FloatingActionButton(
-                  heroTag: 'remove',
-                  onPressed: _removeFilters,
-                  backgroundColor: Colors.orange,
-                  child: const Icon(Icons.filter_none),
-                ),
-              ],
             ),
-          ),
+          if (_ready)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 24,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: <Widget>[
+                  FloatingActionButton(
+                    heroTag: 'switch',
+                    onPressed: _switchCamera,
+                    child: const Icon(Icons.cameraswitch),
+                  ),
+                  FloatingActionButton(
+                    heroTag: 'filter',
+                    onPressed: _applyFirstFilter,
+                    child: const Icon(Icons.auto_awesome),
+                  ),
+                  FloatingActionButton(
+                    heroTag: 'clear',
+                    onPressed: NosmaiFlutter.instance.removeAllFilters,
+                    child: const Icon(Icons.filter_none),
+                  ),
+                ],
+              ),
+            ),
+          if (_ready)
+            Positioned(
+              left: 16,
+              top: 16,
+              child: Chip(label: Text(_joined ? 'Live' : 'Connecting')),
+            ),
         ],
       ),
     );

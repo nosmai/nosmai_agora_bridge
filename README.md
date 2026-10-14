@@ -1,359 +1,186 @@
-# nosmai_agora_bridge
+# Nosmai Agora Bridge for Flutter
 
-Seamless integration of **Nosmai filters** with **Agora RTC Engine** for Flutter. Apply real-time video filters to your Agora streams **without writing any native code**.
+Connect the Nosmai Effects camera pipeline to Agora RTC in Flutter applications.
+The bridge keeps video-frame transfer native, so processed frames do not travel
+through Dart before Agora publishes them.
+
+> `0.1.0-beta.1` is a device-testing prerelease. It uses
+> `nosmai_effects_sdk 2.0.2-beta.2` and Android Effects SDK `3.0.7-beta.2`.
 
 ## Features
 
-- **Zero Native Code** - All platform-specific code is handled internally
-- **Cross-Platform** - Works on Android and iOS
-- **Minimal Integration** - Add Nosmai filters to existing Agora apps with just 2 lines
-- **Full Control** - Manage your RtcEngine configuration as usual
-- **High Performance** - Optimized video frame processing pipeline
+- Nosmai beauty, makeup, reshape, AR, LUT, and background effects in Agora streams
+- Android shared-EGL GPU texture delivery with a bounded I420 fallback
+- Native frame transfer without per-frame Dart callbacks
+- Serialized start, stop, reconnect, and cleanup operations
+- Existing iOS Agora video-observer integration
 
-## Problem Solved
+## Beta installation
 
-Integrating Nosmai filters with Agora typically requires:
-- Writing native code in Kotlin/Java (Android)
-- Writing native code in Objective-C/Swift (iOS)
-- Understanding video frame processing pipelines
-- Managing native handles and memory
-
-**This package eliminates all of that.**
-
-## Installation
-
-Add to your `pubspec.yaml`:
+Add the beta bridge to your app:
 
 ```yaml
 dependencies:
   nosmai_agora_bridge:
     git:
       url: https://github.com/nosmai/nosmai_agora_bridge.git
+      ref: v0.1.0-beta.1
 
-  agora_rtc_engine: ^x.x.x
-  nosmai_camera_sdk: ^x.x.x
+  agora_rtc_engine: ^6.5.3
 ```
 
-Run:
-```bash
+The bridge depends on the matching Nosmai Effects Flutter beta. Android resolves
+the versioned Nosmai AAR automatically from the official GitHub release; do not
+copy an AAR into `android/app/libs`.
+
+Then run:
+
+```sh
 flutter pub get
 ```
 
-## Usage
+## Requirements
 
-### 1. Initialize Nosmai SDK
+- Flutter 3.29 or later
+- Android API 24 or later on `arm64-v8a` or `armeabi-v7a`
+- iOS 15 or later on a physical arm64 device
+- Camera and microphone permissions
+- Valid Nosmai and Agora credentials
+
+## Android flow
+
+On Android, the bridge must create the shared Agora EGL context before Nosmai is
+initialized. Show `NosmaiCameraPreview`, then start streaming from its
+`onInitialized` callback.
 
 ```dart
-import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
-
-await NosmaiFlutter.initialize('YOUR_NOSMAI_KEY');
-```
-
-### 2. Get Native Handle
-
-```dart
-import 'package:nosmai_agora_bridge/nosmai_agora_bridge.dart';
-
 final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
-  agoraAppId: 'YOUR_AGORA_APP_ID',
+  agoraAppId: agoraAppId,
 );
-```
 
-### 3. Create Agora Engine
-
-```dart
-_engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
-```
-
-### 4. Use Agora Normally
-
-```dart
-await _engine.initialize(RtcEngineContext(
-  appId: 'YOUR_AGORA_APP_ID',
+final engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
+await engine.initialize(RtcEngineContext(
+  appId: agoraAppId,
   channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
 ));
 
-await _engine.enableVideo();
-await _engine.startPreview();
+final initialized = await NosmaiFlutter.initialize(nosmaiLicenseKey);
+if (!initialized) {
+  throw StateError('Nosmai initialization failed');
+}
 
-await _engine.joinChannel(
-  token: token,
-  channelId: channelId,
+NosmaiCameraPreview(
+  onInitialized: () async {
+    final accepted = await NosmaiAgoraBridge.startStreaming(
+      channelName: channelName,
+      token: agoraToken,
+      uid: 0,
+    );
+    if (!accepted) {
+      throw StateError('Agora rejected the stream start request');
+    }
+  },
+  onError: (message) => debugPrint(message),
+)
+```
+
+`startStreaming` owns the Android Agora video publication flow. Do not also call
+`startPreview` or `joinChannel` from Dart on Android. A `true` result means Agora
+accepted the request; use Agora event callbacks to confirm the channel join.
+
+Apply effects through the normal Nosmai API:
+
+```dart
+await NosmaiFlutter.instance.applySkinSmoothing(0.6);
+
+final filters = await NosmaiFlutter.instance.getLocalFilters();
+if (filters.isNotEmpty) {
+  await NosmaiFlutter.instance.applyFilter(filters.first.path);
+}
+```
+
+Switch the Android camera through Nosmai:
+
+```dart
+await NosmaiFlutter.instance.switchCamera();
+```
+
+Stop in this order:
+
+```dart
+await NosmaiAgoraBridge.stopStreaming();
+await engine.release();
+await NosmaiAgoraBridge.disposeNative();
+```
+
+## iOS flow
+
+The current iOS bridge uses Agora's native video observer. Initialize Nosmai,
+create the shared Agora engine, and use the normal Agora preview/join flow:
+
+```dart
+final initialized = await NosmaiFlutter.initialize(nosmaiLicenseKey);
+if (!initialized) throw StateError('Nosmai initialization failed');
+
+final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
+  agoraAppId: agoraAppId,
+);
+final engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
+
+await engine.initialize(RtcEngineContext(
+  appId: agoraAppId,
+  channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+));
+await engine.enableVideo();
+await engine.startPreview();
+await engine.joinChannel(
+  token: agoraToken,
+  channelId: channelName,
   uid: 0,
   options: const ChannelMediaOptions(
     clientRoleType: ClientRoleType.clientRoleBroadcaster,
+    channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
   ),
 );
 ```
 
-### 5. Apply Filters
+After switching the iOS Agora camera, notify the bridge:
 
 ```dart
-// Get available filters
-final filters = await NosmaiFlutter.instance.getLocalFilters();
-
-// Apply a filter (appears in live stream)
-await NosmaiFlutter.instance.applyFilter(filters[0].path);
-
-// Remove filters
-await NosmaiFlutter.instance.removeAllFilters();
-```
-
-### 6. Switch Camera
-
-```dart
-// Switch camera and notify Nosmai
-await _engine.switchCamera();
+await engine.switchCamera();
 await NosmaiAgoraBridge.notifyCameraSwitch();
 ```
 
-**Important:** Always call `notifyCameraSwitch()` after switching camera to ensure Nosmai filters work correctly on the new camera.
+## API
 
-### 7. Cleanup
+| Method | Purpose |
+| --- | --- |
+| `getNativeHandle(agoraAppId:)` | Create the native bridge and return the shared Agora handle |
+| `startStreaming(...)` | Start Android publication from the Nosmai preview |
+| `stopStreaming()` | Stop Android publication and restore preview-only rendering |
+| `notifyCameraSwitch()` | Notify the iOS observer after an Agora camera switch |
+| `disposeNative()` | Release native bridge resources |
+| `isInitialized` | Report whether the native bridge handle exists |
 
-```dart
-await _engine.leaveChannel();
-await _engine.release();
-await NosmaiAgoraBridge.disposeNative();
+## Example and validation
+
+The [`example`](example/) app contains the complete platform-aware integration.
+Replace its placeholder credentials before running it on physical devices.
+
+```sh
+flutter test
+python3 tools/run_texture_bridge_tests.py
+python3 tools/run_controller_tests.py
+cd example && flutter build apk --debug
 ```
 
-## Complete Example
+The included host-side tests cover lifecycle and frame ownership. A production
+release should also be tested between two physical devices for local/remote
+orientation, audio, filters, reconnects, camera switching, and thermal behavior.
 
-```dart
-import 'package:flutter/material.dart';
-import 'package:agora_rtc_engine/agora_rtc_engine.dart';
-import 'package:nosmai_agora_bridge/nosmai_agora_bridge.dart';
-import 'package:nosmai_camera_sdk/nosmai_camera_sdk.dart';
-import 'package:permission_handler/permission_handler.dart';
+## Support
 
-class LiveStreamScreen extends StatefulWidget {
-  @override
-  State<LiveStreamScreen> createState() => _LiveStreamScreenState();
-}
-
-class _LiveStreamScreenState extends State<LiveStreamScreen> {
-  RtcEngine? _engine;
-  bool _isJoined = false;
-  Set<int> _remoteUids = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _initAgora();
-  }
-
-  Future<void> _initAgora() async {
-    await [Permission.camera, Permission.microphone].request();
-
-    // Initialize Nosmai
-    await NosmaiFlutter.initialize('YOUR_NOSMAI_KEY');
-
-    // Get native handle
-    final nativeHandle = await NosmaiAgoraBridge.getNativeHandle(
-      agoraAppId: 'YOUR_AGORA_APP_ID',
-    );
-
-    // Create engine with shared handle
-    _engine = createAgoraRtcEngine(sharedNativeHandle: nativeHandle);
-
-    // Initialize engine
-    await _engine!.initialize(RtcEngineContext(
-      appId: 'YOUR_AGORA_APP_ID',
-      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-    ));
-
-    // Register event handlers
-    _engine!.registerEventHandler(
-      RtcEngineEventHandler(
-        onJoinChannelSuccess: (connection, elapsed) {
-          setState(() => _isJoined = true);
-        },
-        onUserJoined: (connection, remoteUid, elapsed) {
-          setState(() => _remoteUids.add(remoteUid));
-        },
-        onUserOffline: (connection, remoteUid, reason) {
-          setState(() => _remoteUids.remove(remoteUid));
-        },
-      ),
-    );
-
-    // Start video
-    await _engine!.enableVideo();
-    await _engine!.startPreview();
-
-    // Join channel
-    await _engine!.joinChannel(
-      token: 'YOUR_TOKEN',
-      channelId: 'test_channel',
-      uid: 0,
-      options: const ChannelMediaOptions(
-        clientRoleType: ClientRoleType.clientRoleBroadcaster,
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _engine?.leaveChannel();
-    _engine?.release();
-    NosmaiAgoraBridge.disposeNative();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          if (_isJoined)
-            AgoraVideoView(
-              controller: VideoViewController(
-                rtcEngine: _engine!,
-                canvas: const VideoCanvas(uid: 0),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-```
-
-## Applying Filters
-
-### Local Filters
-
-```dart
-final filters = await NosmaiFlutter.instance.getLocalFilters();
-await NosmaiFlutter.instance.applyFilter(filters[0].path);
-```
-
-### Cloud Filters
-
-```dart
-final cloudFilters = await NosmaiFlutter.instance.getCloudFilters();
-final result = await NosmaiFlutter.instance.downloadCloudFilter(cloudFilters[0].id);
-await NosmaiFlutter.instance.applyFilter(result['path']);
-```
-
-### Beauty Filters
-
-```dart
-await NosmaiFlutter.instance.applySkinSmoothing(5.0);
-await NosmaiFlutter.instance.applyFaceSlimming(3.0);
-await NosmaiFlutter.instance.applyEyeEnlargement(2.0);
-await NosmaiFlutter.instance.removeAllFilters();
-```
-
-## How It Works
-
-```
-┌─────────────────────────────────┐
-│      Flutter Application        │
-└────────────┬────────────────────┘
-             │
-             │ getNativeHandle()
-             ▼
-┌─────────────────────────────────┐
-│   NosmaiAgoraBridge Plugin      │
-└────────────┬────────────────────┘
-             │
-        ┌────┴─────┐
-        │          │
-        ▼          ▼
-┌──────────┐  ┌──────────┐
-│ Android  │  │   iOS    │
-│VideoRaw  │  │VideoRaw  │
-│DataCtrl  │  │DataCtrl  │
-└─────┬────┘  └────┬─────┘
-      │            │
-      └────┬───────┘
-           ▼
-    ┌─────────────┐
-    │ Agora RTC + │
-    │ Nosmai SDK  │
-    └─────────────┘
-```
-
-1. `getNativeHandle()` creates native VideoRawDataController
-2. VideoRawDataController intercepts Agora video frames
-3. Frames are processed by Nosmai SDK (filters applied)
-4. Processed frames are sent to remote users
-
-
-## API Reference
-
-### NosmaiAgoraBridge
-
-| Method | Description | Returns |
-|--------|-------------|---------|
-| `getNativeHandle({required String agoraAppId})` | Get native handle for Agora integration | `Future<int>` |
-| `initialize({required String agoraAppId})` | Convenience method - creates and initializes RtcEngine | `Future<RtcEngine>` |
-| `notifyCameraSwitch()` | Notify Nosmai SDK when camera is switched | `Future<void>` |
-| `disposeNative()` | Clean up native resources only | `Future<void>` |
-| `dispose()` | Clean up RtcEngine and native resources | `Future<void>` |
-| `engine` | Get current RtcEngine instance | `RtcEngine?` |
-| `isInitialized` | Check if native bridge is initialized | `bool` |
-
-## FAQ
-
-**Q: Do I need to modify my existing Agora code?**
-A: Minimal changes - just add `getNativeHandle()` and use the handle when creating RtcEngine.
-
-**Q: Can I use all Nosmai SDK features?**
-A: Yes! Use `NosmaiFlutter.instance` to access all Nosmai features.
-
-**Q: Does this work with existing Agora features?**
-A: Absolutely. You configure and use RtcEngine exactly as before.
-
-**Q: What about performance?**
-A: Native video processing is highly optimized with minimal performance impact.
-
-## Important Notes
-
-### Local Preview Configuration
-
-Currently, for the local preview to display correctly, you need to configure the `VideoCanvas` with specific render and mirror settings:
-
-```dart
-AgoraVideoView(
-  controller: VideoViewController(
-    rtcEngine: _engine,
-    canvas: const VideoCanvas(
-      uid: 0,
-      renderMode: RenderModeType.renderModeFit,
-      mirrorMode: VideoMirrorModeType.videoMirrorModeDisabled,
-    ),
-  ),
-),
-```
-
-### Known Issues
-
-- **Android Beauty Filters**: Beauty filters are currently not working in live streaming on Android. We are actively working on fixing this issue and will release an update soon.
-
-## Troubleshooting
-
-### Live streaming works in debug/release but not in TestFlight/production (iOS)
-
-If your live streaming works fine in debug and release builds but fails in TestFlight or production builds, you need to change the XCode strip style setting:
-
-1. Open your project in **XCode**
-2. Select **Targets** → **Runner**
-3. Go to **Build Settings**
-4. Under **Deployment** section, find **Strip Style**
-5. Change the value to **Non-Global Symbols**
-
-![XCode Strip Style Settings](xcode-strip-style-settings.png)
-
-This ensures that necessary symbols are preserved in production builds for the native bridge to work correctly.
-
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Credits
-
-- Built with [Agora RTC Engine](https://www.agora.io/)
-- Powered by [Nosmai Camera SDK](https://nosmai.com/)
+- [Nosmai Effects documentation](https://nosmai.com/docs/effects/introduction/)
+- [Flutter Agora integration guide](https://nosmai.com/docs/effects/integrations/agora/flutter/)
+- [GitHub issues](https://github.com/nosmai/nosmai_agora_bridge/issues)
+- Email: admin@nosmai.com

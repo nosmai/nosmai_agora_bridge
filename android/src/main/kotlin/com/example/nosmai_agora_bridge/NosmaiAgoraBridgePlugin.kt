@@ -1,87 +1,95 @@
 package com.example.nosmai_agora_bridge
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
+import java.util.concurrent.Executors
+import java.util.concurrent.CompletableFuture
 
-/** NosmaiAgoraBridgePlugin */
-class NosmaiAgoraBridgePlugin : FlutterPlugin, MethodCallHandler {
+/** Serial lifecycle commands off the platform/RTC/GL threads. */
+class NosmaiAgoraBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var channel: MethodChannel
     private lateinit var context: Context
-    private var videoRawDataController: VideoRawDataController? = null
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private var detached = CompletableFuture.completedFuture<Void>(null)
+    private var commands = Executors.newSingleThreadExecutor { Thread(it, "nosmai-agora-control") }
+    private var controller: VideoRawDataController? = null
+    private var initializedAppId: String? = null
 
-    override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "nosmai_agora_bridge")
+    override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        if (commands.isShutdown) {
+            val previous = detached
+            commands = Executors.newSingleThreadExecutor { Thread(it, "nosmai-agora-control") }
+            // A reattached engine must not race the old engine's native destroy.
+            commands.execute { previous.join() }
+        }
+        context = binding.applicationContext
+        channel = MethodChannel(binding.binaryMessenger, "nosmai_agora_bridge")
         channel.setMethodCallHandler(this)
-        context = flutterPluginBinding.applicationContext
     }
 
-    override fun onMethodCall(call: MethodCall, result: Result) {
-        when (call.method) {
-            "getPlatformVersion" -> {
-                result.success("Android ${android.os.Build.VERSION.RELEASE}")
-            }
-            "native_init" -> {
-                val appId = call.argument<String>("appId")
-                if (appId != null) {
-                    try {
-                        videoRawDataController = VideoRawDataController(context, appId)
-                        val nativeHandle = videoRawDataController?.nativeHandle() ?: 0L
-                        result.success(nativeHandle)
-                    } catch (e: Exception) {
-                        result.error("INIT_ERROR", "Failed to initialize: ${e.message}", null)
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "getPlatformVersion") {
+            result.success("Android ${android.os.Build.VERSION.RELEASE}")
+            return
+        }
+        if (call.method !in setOf("native_init", "native_dispose", "native_start_streaming", "native_stop_streaming")) {
+            result.notImplemented(); return
+        }
+        commands.execute {
+            try {
+                val value: Any? = when (call.method) {
+                    "native_init" -> {
+                        val appId = call.argument<String>("appId")
+                        require(!appId.isNullOrBlank()) { "App ID is required" }
+                        check(controller == null || initializedAppId == appId) { "Dispose the previous engine before changing App ID" }
+                        if (controller == null) {
+                            controller = VideoRawDataController(context, appId)
+                            initializedAppId = appId
+                        }
+                        controller!!.nativeHandle()
                     }
-                } else {
-                    result.error("INVALID_ARGS", "App ID is required", null)
+                    "native_start_streaming" -> {
+                        val current = controller ?: throw IllegalStateException("Call getNativeHandle before startStreaming")
+                        val name = call.argument<String>("channelName")
+                        require(!name.isNullOrBlank()) { "channelName is required" }
+                        current.startStreaming(call.argument<String>("token"), name,
+                            call.argument<Number>("uid")?.toInt() ?: 0)
+                    }
+                    "native_stop_streaming" -> controller?.stopStreaming() ?: true
+                    else -> {
+                        controller?.dispose()
+                        controller = null; initializedAppId = null
+                        true
+                    }
                 }
-            }
-            "native_dispose" -> {
-                try {
-                    videoRawDataController?.dispose()
-                    videoRawDataController = null
-                    result.success(true)
-                } catch (e: Exception) {
-                    result.error("DISPOSE_ERROR", "Failed to dispose: ${e.message}", null)
+                main.post { result.success(value) }
+            } catch (error: Throwable) {
+                val code = when {
+                    error is IllegalArgumentException -> "INVALID_ARGS"
+                    call.method == "native_init" -> "INIT_ERROR"
+                    call.method == "native_dispose" -> "DISPOSE_ERROR"
+                    call.method == "native_stop_streaming" -> "STOP_STREAM_ERROR"
+                    controller == null -> "NOT_INITIALIZED"
+                    else -> "START_STREAM_ERROR"
                 }
-            }
-            "native_start_streaming" -> {
-                val controller = videoRawDataController
-                if (controller == null) {
-                    result.error("NOT_INITIALIZED", "Call getNativeHandle before startStreaming", null)
-                    return
-                }
-                val channelName = call.argument<String>("channelName")
-                if (channelName.isNullOrBlank()) {
-                    result.error("INVALID_ARGS", "channelName is required", null)
-                    return
-                }
-                val token = call.argument<String>("token")
-                val uid = call.argument<Int>("uid") ?: 0
-                try {
-                    result.success(controller.startStreaming(token, channelName, uid))
-                } catch (e: Exception) {
-                    result.error("START_STREAM_ERROR", "Failed to start stream: ${e.message}", null)
-                }
-            }
-            "native_stop_streaming" -> {
-                try {
-                    result.success(videoRawDataController?.stopStreaming() ?: true)
-                } catch (e: Exception) {
-                    result.error("STOP_STREAM_ERROR", "Failed to stop stream: ${e.message}", null)
-                }
-            }
-            else -> {
-                result.notImplemented()
+                main.post { result.error(code, error.message, null) }
             }
         }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        videoRawDataController?.dispose()
-        videoRawDataController = null
+        val completion = CompletableFuture<Void>()
+        detached = completion
+        commands.execute {
+            try { controller?.dispose() }
+            catch (error: Throwable) { android.util.Log.e("NosmaiAgoraBridge", "Detach cleanup failed", error) }
+            finally { controller = null; initializedAppId = null; completion.complete(null) }
+        }
+        commands.shutdown()
     }
 }

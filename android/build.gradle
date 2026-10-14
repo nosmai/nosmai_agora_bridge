@@ -23,6 +23,7 @@ allprojects {
 }
 
 apply plugin: "com.android.library"
+def nosmaiSdkVersion = "3.0.7-beta.2"
 apply plugin: "kotlin-android"
 
 android {
@@ -49,12 +50,10 @@ android {
     }
 
     dependencies {
-        // DEV-ONLY (development phase): compile against the SDK SOURCE module so new
-        // SDK APIs are available without rebuilding the .aar. The host app's
-        // settings.gradle(.kts) must include ':nosmai'. TO REVERT for .aar builds /
-        // distribution: uncomment the .aar line, comment out compileOnly project(':nosmai').
-        // compileOnly(name: 'nosmai-release', ext: 'aar')
-        compileOnly project(':nosmai')
+        // Compile against the same release coordinate used by the Effects
+        // plugin. The runtime AAR is supplied transitively by that plugin, so
+        // this bridge does not package a second native SDK copy.
+        compileOnly("com.nosmai:nosmai-sdk:${nosmaiSdkVersion}@aar")
         compileOnly("io.agora.rtc:full-sdk:4.5.2")
 
         testImplementation("org.jetbrains.kotlin:kotlin-test")
@@ -69,6 +68,43 @@ android {
                events "passed", "skipped", "failed", "standardOut", "standardError"
                outputs.upToDateWhen {false}
                showStandardStreams = true
+            }
+        }
+    }
+}
+
+// Gradle resolves transitive Android dependencies through the consuming app.
+// Keep the verified native artifact in the official release repository and
+// allow an explicit local override only while developing the native SDK.
+def nosmaiLocalRepo = project.findProperty("nosmaiSdkLocalRepo") ?: System.getenv("NOSMAI_SDK_LOCAL_REPO")
+rootProject.allprojects {
+    repositories {
+        if (nosmaiLocalRepo) {
+            ivy {
+                name = "nosmaiEffectsSdkLocal"
+                url = uri(new File(nosmaiLocalRepo).toURI())
+                patternLayout {
+                    artifact("[artifact]-[revision].[ext]")
+                }
+                metadataSources {
+                    artifact()
+                }
+                content {
+                    includeModule("com.nosmai", "nosmai-sdk")
+                }
+            }
+        }
+        ivy {
+            name = "nosmaiEffectsSdk"
+            url = uri("https://github.com/nosmai/nosmai_effects_sdk_android/releases/download")
+            patternLayout {
+                artifact("v[revision]/[artifact]-[revision].[ext]")
+            }
+            metadataSources {
+                artifact()
+            }
+            content {
+                includeModule("com.nosmai", "nosmai-sdk")
             }
         }
     }
