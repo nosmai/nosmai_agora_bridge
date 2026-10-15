@@ -99,7 +99,8 @@ class VideoRawDataController(context: Context, appId: String) {
         try {
             clearCallbacks()
             NosmaiSDK.setRenderMode(NosmaiSDK.RenderMode.DUAL_OUTPUT)
-            rtc.setExternalVideoSource(true, bridge != null, Constants.ExternalVideoSourceType.VIDEO_FRAME)
+            // Both shared-GL conversion and the SDK fallback now submit owned I420.
+            rtc.setExternalVideoSource(true, false, Constants.ExternalVideoSourceType.VIDEO_FRAME)
             rtc.setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
             if (bridge != null) {
                 val output = bridge!!
@@ -127,7 +128,7 @@ class VideoRawDataController(context: Context, appId: String) {
             if (rtc.joinChannel(token?.takeIf { it.isNotBlank() }, channelName, uid, options) != 0) {
                 retire(session)
                 finishDrain()
-                rtc.setExternalVideoSource(false, bridge != null, Constants.ExternalVideoSourceType.VIDEO_FRAME)
+                rtc.setExternalVideoSource(false, false, Constants.ExternalVideoSourceType.VIDEO_FRAME)
                 retiring = null
                 return false
             }
@@ -137,7 +138,7 @@ class VideoRawDataController(context: Context, appId: String) {
             // Keep a failed drain available for a later stop/dispose retry.
             try {
                 finishDrain()
-                rtc.setExternalVideoSource(false, bridge != null, Constants.ExternalVideoSourceType.VIDEO_FRAME)
+                rtc.setExternalVideoSource(false, false, Constants.ExternalVideoSourceType.VIDEO_FRAME)
                 retiring = null
             } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
             throw error
@@ -168,7 +169,7 @@ class VideoRawDataController(context: Context, appId: String) {
         if (session != null && retiring !== session) retire(session)
         finishDrain()
         val rtc = engine ?: return true
-        rtc.setExternalVideoSource(false, session?.bridge != null, Constants.ExternalVideoSourceType.VIDEO_FRAME)
+        rtc.setExternalVideoSource(false, false, Constants.ExternalVideoSourceType.VIDEO_FRAME)
         if (session == null) return true
         leaving = true
         val result = rtc.leaveChannel()

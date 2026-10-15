@@ -1,3 +1,9 @@
+## 0.1.0-beta.2
+
+* Fixed Android video-frame delivery stability when forwarding processed frames to Agora.
+* Improved frame ownership and cleanup during streaming, reconnect, and shutdown.
+* Continued using the same Nosmai Effects Flutter beta and Android native SDK artifacts.
+
 ## 0.1.0-beta.1
 
 * Added a synchronized Android GPU texture path for Nosmai preview output.

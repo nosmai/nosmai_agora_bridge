@@ -4,13 +4,13 @@ Connect the Nosmai Effects camera pipeline to Agora RTC in Flutter applications.
 The bridge keeps video-frame transfer native, so processed frames do not travel
 through Dart before Agora publishes them.
 
-> `0.1.0-beta.1` is a device-testing prerelease. It uses
+> `0.1.0-beta.2` is a device-testing prerelease. It uses
 > `nosmai_effects_sdk 2.0.2-beta.2` and Android Effects SDK `3.0.7-beta.2`.
 
 ## Features
 
 - Nosmai beauty, makeup, reshape, AR, LUT, and background effects in Agora streams
-- Android shared-EGL GPU texture delivery with a bounded I420 fallback
+- Android shared-EGL frame copies with bounded I420 delivery to Agora (SDK I420 fallback when EGL sharing is unavailable)
 - Native frame transfer without per-frame Dart callbacks
 - Serialized start, stop, reconnect, and cleanup operations
 - Existing iOS Agora video-observer integration
@@ -24,7 +24,7 @@ dependencies:
   nosmai_agora_bridge:
     git:
       url: https://github.com/nosmai/nosmai_agora_bridge.git
-      ref: v0.1.0-beta.1
+      ref: v0.1.0-beta.2
 
   agora_rtc_engine: ^6.5.3
 ```
@@ -169,13 +169,10 @@ Replace its placeholder credentials before running it on physical devices.
 
 ```sh
 flutter test
-python3 tools/run_texture_bridge_tests.py
-python3 tools/run_controller_tests.py
 cd example && flutter build apk --debug
 ```
 
-The included host-side tests cover lifecycle and frame ownership. A production
-release should also be tested between two physical devices for local/remote
+A production release should also be tested between two physical devices for local/remote
 orientation, audio, filters, reconnects, camera switching, and thermal behavior.
 
 ## Support

@@ -46,7 +46,7 @@ PODS:
     - Flutter
   - iris_method_channel (0.0.1):
     - Flutter
-  - nosmai_agora_bridge (0.1.0-beta.1):
+  - nosmai_agora_bridge (0.1.0-beta.2):
     - AgoraRtcEngine_iOS
     - Flutter
   - nosmai_effects_sdk (2.0.1):

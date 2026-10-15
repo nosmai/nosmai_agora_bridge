@@ -4,15 +4,17 @@ import android.graphics.Matrix;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.util.Log;
+import io.agora.base.internal.video.YuvConverter;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import io.agora.base.JavaI420Buffer;
 import io.agora.base.TextureBuffer;
 import io.agora.base.TextureBufferHelper;
 import io.agora.base.VideoFrame;
 import io.agora.rtc2.RtcEngine;
 import io.agora.rtc2.gl.EglBaseProvider;
 
-/** Bounded GPU copies. A slot belongs to the encoder until its final release. */
+/** Bounded GPU copies converted to owned I420 buffers for Agora submission. */
 final class AgoraTextureBridge {
     private static final class Slot {
         final int texture, fbo, width, height;
@@ -24,12 +26,16 @@ final class AgoraTextureBridge {
     }
     private final TextureBufferHelper helper;
     private final RtcEngine engine;
-    private final Slot[] slots = new Slot[3];
+    // Bound memory while consumers retain frames. Owned I420 delivery avoids
+    // texture-retention stalls observed with Agora 4.5.2.
+    static final int MAX_IN_FLIGHT_TEXTURES = 3;
+    private final Slot[] slots = new Slot[MAX_IN_FLIGHT_TEXTURES];
     private final AtomicBoolean pending = new AtomicBoolean();
     private final CompletableFuture<Void> submissionsDrained = new CompletableFuture<>();
     private volatile boolean released;
     private boolean helperDisposed;
     private int srcFbo;
+    private YuvConverter yuvConverter;
 
     AgoraTextureBridge(TextureBufferHelper helper, RtcEngine engine) {
         this.helper = helper; this.engine = engine;
@@ -111,26 +117,53 @@ final class AgoraTextureBridge {
             }
         }
         if (fence != 0) GLES30.glDeleteSync(fence);
-        VideoFrame frame = null;
+        TextureBuffer textureBuffer = null;
+        VideoFrame.I420Buffer buffer = null;
         try {
             if (released) return;
-            TextureBuffer buffer = new TextureBuffer(
+            if (yuvConverter == null) yuvConverter = new YuvConverter();
+            textureBuffer = new TextureBuffer(
                     EglBaseProvider.getCurrentEglContext(), slot.width, slot.height,
                     VideoFrame.TextureBuffer.Type.RGB, slot.texture, new Matrix(),
-                    helper.getHandler(), null,
+                    helper.getHandler(), yuvConverter,
                     () -> helper.getHandler().post(() -> {
                         slot.busy = false;
                         if (released) cleanup();
                     }));
-            frame = new VideoFrame(buffer, 0, timestampNs);
+            // Conversion runs on our GL worker after the copy fence. The source
+            // SDK slot is already returned, so readback never blocks its render
+            // callback. Only the streaming handoff uses CPU-addressable pixels.
+            buffer = convertForSubmission(textureBuffer);
+            textureBuffer = null; // Ownership transferred to buffer's callback.
+            VideoFrame frame = new VideoFrame(buffer, 0, timestampNs);
             engine.pushExternalVideoFrame(frame);
         } catch (Throwable error) {
             Log.e("AgoraTexBridge", "Texture submission failed", error);
         } finally {
-            if (frame != null) frame.release();
+            if (buffer != null) buffer.release();
+            else if (textureBuffer != null) textureBuffer.release();
             else slot.busy = false;
             pending.set(false);
             if (released) cleanup();
+        }
+    }
+
+    private VideoFrame.I420Buffer convertForSubmission(TextureBuffer texture) {
+        VideoFrame.I420Buffer converted = texture.toI420();
+        if (converted == null) throw new IllegalStateException("Texture conversion failed");
+        try {
+            // Keep both pixel storage and its slot alive for any asynchronous
+            // consumer. Never infer ownership from pushExternalVideoFrame's bool.
+            return JavaI420Buffer.wrap(converted.getWidth(), converted.getHeight(),
+                    converted.getDataY(), converted.getStrideY(),
+                    converted.getDataU(), converted.getStrideU(),
+                    converted.getDataV(), converted.getStrideV(), () -> {
+                        try { converted.release(); }
+                        finally { texture.release(); }
+                    });
+        } catch (Throwable error) {
+            converted.release();
+            throw error;
         }
     }
 
@@ -182,6 +215,12 @@ final class AgoraTextureBridge {
         }
         if (!held && !helperDisposed) {
             helperDisposed = true;
+            // Keep conversion resources and the GL thread alive until all
+            // submitted buffers have returned their slots.
+            if (yuvConverter != null) {
+                yuvConverter.release();
+                yuvConverter = null;
+            }
             helper.dispose();
         }
     }
