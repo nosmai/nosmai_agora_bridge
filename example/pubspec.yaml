@@ -27,10 +27,7 @@ dependencies:
     path: ../
 
   agora_rtc_engine: ^6.5.3
-  nosmai_effects_sdk:
-    git:
-      url: https://github.com/nosmai/nosmai_effects_sdk_flutter.git
-      ref: v2.0.2-beta.2
+  nosmai_effects_sdk: ^2.0.2
   permission_handler: ^12.0.1
 
   # The following adds the Cupertino Icons font to your application.

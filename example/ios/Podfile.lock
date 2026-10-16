@@ -46,13 +46,13 @@ PODS:
     - Flutter
   - iris_method_channel (0.0.1):
     - Flutter
-  - nosmai_agora_bridge (0.1.0-beta.2):
+  - nosmai_agora_bridge (0.1.0):
     - AgoraRtcEngine_iOS
     - Flutter
-  - nosmai_effects_sdk (2.0.1):
+  - nosmai_effects_sdk (2.0.2):
     - Flutter
-    - NosmaiCameraSDK (~> 3.0.6)
-  - NosmaiCameraSDK (3.0.6)
+    - NosmaiCameraSDK (= 3.0.7)
+  - NosmaiCameraSDK (3.0.7)
   - permission_handler_apple (9.4.8):
     - Flutter
 
@@ -96,9 +96,9 @@ SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
   iris_method_channel: 7d661cf3259b3009ae423508470dbeb9374446ee
-  nosmai_agora_bridge: aaa759cd981b818c5c267a700e9cdac3324af88b
-  nosmai_effects_sdk: 7df9dbabc0560d3fef94790fbb838c3c7449294f
-  NosmaiCameraSDK: e12999550865089ebf5c5809c52bbc05ffa3242b
+  nosmai_agora_bridge: 31f57c2e3cc6e3b9073a35549252fbab440d9ffd
+  nosmai_effects_sdk: 46cf5b65d29a19d72b48d47a777bb52d7d8f9be8
+  NosmaiCameraSDK: b914cb19ea0f88faf537e726f0b09bfa20ba3bc7
   permission_handler_apple: 92d754bbaa7361d436db2d6c3c1c2a0fdcec462e
 
 PODFILE CHECKSUM: ce2a4dd764e1c7aeed6a7cdc5e61d092b6dc6d32

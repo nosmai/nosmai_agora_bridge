@@ -23,7 +23,7 @@ allprojects {
 }
 
 apply plugin: "com.android.library"
-def nosmaiSdkVersion = "3.0.7-beta.2"
+def nosmaiSdkVersion = "3.0.7"
 apply plugin: "kotlin-android"
 
 android {

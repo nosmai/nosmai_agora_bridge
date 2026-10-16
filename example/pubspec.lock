@@ -213,16 +213,15 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "0.1.0-beta.2"
+    version: "0.1.0"
   nosmai_effects_sdk:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "v2.0.2-beta.2"
-      resolved-ref: "58dfe1c11d607bf812ee50bde8d1d6e21563d7a7"
-      url: "https://github.com/nosmai/nosmai_effects_sdk_flutter.git"
-    source: git
-    version: "2.0.2-beta.2"
+      name: nosmai_effects_sdk
+      sha256: "7a8ef419852e66a4d8c3398da9171ca408fe0ba331c19d4d32c0308325194cfe"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.2"
   path:
     dependency: transitive
     description:

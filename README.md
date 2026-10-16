@@ -4,8 +4,7 @@ Connect the Nosmai Effects camera pipeline to Agora RTC in Flutter applications.
 The bridge keeps video-frame transfer native, so processed frames do not travel
 through Dart before Agora publishes them.
 
-> `0.1.0-beta.2` is a device-testing prerelease. It uses
-> `nosmai_effects_sdk 2.0.2-beta.2` and Android Effects SDK `3.0.7-beta.2`.
+Version `0.1.0` uses `nosmai_effects_sdk 2.0.2` and Nosmai native SDK `3.0.7`.
 
 ## Features
 
@@ -15,21 +14,21 @@ through Dart before Agora publishes them.
 - Serialized start, stop, reconnect, and cleanup operations
 - Existing iOS Agora video-observer integration
 
-## Beta installation
+## Installation
 
-Add the beta bridge to your app:
+Add the bridge to your app:
 
 ```yaml
 dependencies:
   nosmai_agora_bridge:
     git:
       url: https://github.com/nosmai/nosmai_agora_bridge.git
-      ref: v0.1.0-beta.2
+      ref: v0.1.0
 
   agora_rtc_engine: ^6.5.3
 ```
 
-The bridge depends on the matching Nosmai Effects Flutter beta. Android resolves
+The bridge depends on the matching stable Nosmai Effects Flutter package. Android resolves
 the versioned Nosmai AAR automatically from the official GitHub release; do not
 copy an AAR into `android/app/libs`.
 
@@ -95,7 +94,7 @@ await NosmaiFlutter.instance.applySkinSmoothing(0.6);
 
 final filters = await NosmaiFlutter.instance.getLocalFilters();
 if (filters.isNotEmpty) {
-  await NosmaiFlutter.instance.applyFilter(filters.first.path);
+  await NosmaiFlutter.instance.applyEffect(filters.first.path);
 }
 ```
 

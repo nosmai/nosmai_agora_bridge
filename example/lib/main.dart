@@ -15,7 +15,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nosmai Agora Bridge Beta',
+      title: 'Nosmai Agora Bridge',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
@@ -150,7 +150,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     try {
       final filters = await NosmaiFlutter.instance.getLocalFilters();
       if (filters.isEmpty) throw StateError('No local filters are available.');
-      await NosmaiFlutter.instance.applyFilter(filters.first.path);
+      await NosmaiFlutter.instance.applyEffect(filters.first.path);
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     }
@@ -188,7 +188,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Nosmai + Agora Beta')),
+      appBar: AppBar(title: const Text('Nosmai + Agora')),
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
